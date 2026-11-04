@@ -1,0 +1,1267 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Drone Warehouse 4.0 - Enterprise AI & 3D Cloud</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- Firebase SDKs Compat -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-auth-compat.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #f8fafc; overflow-x: hidden; }
+        .view-container { 
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5); 
+            border-radius: 12px;
+            border: 1px solid #334155;
+            overflow: hidden;
+            position: relative;
+            width: 100%;
+            height: 500px;
+            background: radial-gradient(circle at center, #1e293b 0%, #0f172a 100%);
+        }
+        canvas { display: block; width: 100%; height: 100%; }
+        .glass-panel {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .power-bi-card { background: #1e293b; border-left: 4px solid #0ea5e9; border-radius: 4px; padding: 16px; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+        .power-bi-card.teal { border-left-color: #14b8a6; }
+        .power-bi-card.orange { border-left-color: #f97316; }
+        .power-bi-card.red { border-left-color: #ef4444; }
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #1e293b; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+        #canvas-3d { display: none; }
+    </style>
+</head>
+<body class="min-h-screen p-4 md:p-6 flex flex-col items-center">
+
+    <header class="w-full max-w-7xl mb-6 flex flex-col xl:flex-row justify-between items-center gap-4">
+        <div>
+            <h1 class="text-3xl md:text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-emerald-400 tracking-tight">
+                DRONE WAREHOUSE 4.0
+            </h1>
+            <p class="text-slate-400 mt-1 font-medium flex items-center gap-2">
+                Simulación Autónoma, IA, 3D & Cloud Firestore
+                <span class="px-2 py-0.5 bg-blue-900/50 text-blue-300 text-xs rounded border border-blue-700">Enterprise</span>
+            </p>
+        </div>
+        
+        <!-- Panel de Tiempo y Batería -->
+        <div class="glass-panel p-3 rounded-xl flex gap-4 text-sm font-semibold shadow-lg items-center">
+            <div class="flex flex-col items-center px-3 border-r border-slate-600">
+                <span class="text-slate-400 text-xs">Turno</span>
+                <span id="time-display" class="text-base text-white">Día 1 - Mañana</span>
+            </div>
+            <div class="flex flex-col items-center px-3 border-r border-slate-600">
+                <span class="text-slate-400 text-xs">Total Items</span>
+                <span id="total" class="text-base text-white">0</span>
+            </div>
+            <div class="flex flex-col items-center px-3 border-r border-slate-600">
+                <span class="text-slate-400 text-xs">Escaneados</span>
+                <span id="scanned" class="text-base text-emerald-400">0</span>
+            </div>
+            <div class="flex flex-col items-center px-3 border-r border-slate-600">
+                <span class="text-slate-400 text-xs">Batería</span>
+                <span id="battery" class="text-base text-emerald-400">100%</span>
+            </div>
+            <div class="flex flex-col items-center px-3">
+                <span class="text-slate-400 text-xs">Nube DB</span>
+                <span id="cloudStatus" class="text-base text-yellow-400">Conectando...</span>
+            </div>
+        </div>
+    </header>
+
+    <main class="w-full max-w-7xl grid grid-cols-1 lg:grid-cols-4 gap-6">
+        
+        <!-- Controles -->
+        <div class="col-span-1 lg:col-span-4 glass-panel p-4 rounded-xl flex flex-wrap gap-4 items-center justify-between">
+            <div class="flex flex-wrap gap-3">
+                <button onclick="startMission()" class="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-semibold transition shadow-lg shadow-blue-500/30">
+                    ▶ Iniciar Vuelo
+                </button>
+                <button onclick="pauseMission()" class="px-5 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-semibold transition">
+                    ⏸ Pausar
+                </button>
+                <button onclick="advanceTime()" class="px-5 py-2 bg-yellow-600 hover:bg-yellow-500 text-white rounded-lg font-semibold transition shadow-lg shadow-yellow-500/30 flex items-center gap-2" title="Avanza al siguiente turno">
+                    ⏱ Avanzar Turno
+                </button>
+                <button onclick="toggleView()" id="btn-view" class="px-5 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg font-semibold transition shadow-lg shadow-purple-500/30">
+                    👁 Cambiar a 3D
+                </button>
+                <button onclick="toggleNightMode()" id="btn-night" class="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-600 rounded-lg font-semibold transition flex items-center gap-2 hidden lg:flex">
+                    🌙 Modo Nocturno
+                </button>
+            </div>
+            <div class="flex items-center gap-4">
+                <div class="flex items-center gap-2 text-sm text-slate-300">
+                    <span>Velocidad:</span>
+                    <input type="range" id="speed-slider" min="1" max="5" step="1" value="2" oninput="updateSpeed(this.value)" class="w-24 accent-blue-500 cursor-pointer">
+                    <span id="speed-val" class="w-6 font-mono">2x</span>
+                </div>
+                <div class="flex items-center gap-2 px-4 py-2 bg-slate-800 rounded-lg border border-slate-600 relative">
+                    <span id="status-ping" class="hidden absolute left-4 inline-flex h-3 w-3 rounded-full opacity-75"></span>
+                    <span id="status-dot" class="relative inline-flex rounded-full h-3 w-3 bg-slate-500"></span>
+                    <span id="status" class="font-semibold text-slate-300 ml-1">En Base</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Contenedor Visual (2D / 3D) e Historial Cloud -->
+        <div class="col-span-1 lg:col-span-3 flex flex-col gap-6">
+            <div class="view-container">
+                <canvas id="warehouse-2d"></canvas>
+                <canvas id="canvas-3d"></canvas>
+                <div id="view-label" class="absolute top-4 left-4 bg-black/60 px-3 py-1 rounded text-white text-sm font-bold border border-white/20 z-10">Vista 2D (Planta)</div>
+                
+                <!-- Cámara FPV (Primera Persona) -->
+                <div id="fpv-container" class="absolute bottom-4 left-4 w-48 h-36 border-2 border-slate-400/50 rounded-xl overflow-hidden shadow-2xl shadow-blue-900/50 z-20 hidden bg-black">
+                    <div class="absolute top-1 left-2 text-[10px] text-red-500 font-mono font-bold animate-pulse z-30">● REC FPV</div>
+                    <div class="absolute inset-0 border border-white/10 pointer-events-none z-30 flex items-center justify-center">
+                        <div class="w-4 h-4 border border-green-500/50 rounded-full"></div>
+                        <div class="absolute w-full h-[1px] bg-green-500/20"></div>
+                        <div class="absolute h-full w-[1px] bg-green-500/20"></div>
+                    </div>
+                    <canvas id="canvas-fpv"></canvas>
+                </div>
+
+                <!-- Panel de Detalles de Inventario -->
+                <div id="item-details-panel" class="absolute top-4 right-4 bg-slate-900/95 border border-blue-500 rounded-xl p-4 shadow-2xl z-20 hidden backdrop-blur-md w-64 transition-all">
+                    <div class="flex justify-between items-start mb-2">
+                        <h4 id="detail-sku" class="text-blue-400 font-extrabold text-lg">SKU</h4>
+                        <button onclick="hideProductDetails()" class="text-slate-400 hover:text-white">✖</button>
+                    </div>
+                    <p id="detail-name" class="text-white text-sm font-semibold mb-3">Producto</p>
+                    <div class="grid grid-cols-2 gap-2 text-xs mb-3">
+                        <div class="bg-slate-800 p-2 rounded border border-slate-700">
+                            <span class="text-slate-400 block text-[10px] uppercase">Ubicación</span>
+                            <span id="detail-loc" class="font-bold text-slate-200">Rack A1</span>
+                        </div>
+                        <div class="bg-slate-800 p-2 rounded border border-slate-700">
+                            <span class="text-slate-400 block text-[10px] uppercase">Inventario</span>
+                            <span id="detail-qty" class="font-bold text-emerald-400">0 uds.</span>
+                        </div>
+                    </div>
+                    <div id="detail-boxes" class="text-xs text-slate-300 mb-3 text-center bg-slate-800/50 py-1 rounded">-- cajas --</div>
+                    <div id="detail-status" class="mt-2 text-xs font-bold text-center p-2 rounded bg-slate-800">Estado</div>
+                </div>
+            </div>
+
+            <!-- Tabla de Historial en la Nube -->
+            <div class="glass-panel p-4 rounded-xl flex flex-col">
+                <div class="flex justify-between items-center mb-3">
+                    <h3 class="font-bold text-white text-sm flex items-center gap-2">
+                        📊 Historial de Escaneos Anteriores (Cloud Firestore)
+                    </h3>
+                    <span class="text-xs text-slate-400">Selecciona un registro para abrir su reporte</span>
+                </div>
+                <div class="overflow-x-auto max-h-40">
+                    <table class="w-full text-left text-xs text-slate-300">
+                        <thead class="bg-slate-800 text-slate-400 uppercase">
+                            <tr>
+                                <th class="p-2">Turno / Fecha</th>
+                                <th class="p-2">Escaneados</th>
+                                <th class="p-2">Batería Final</th>
+                                <th class="p-2">Acción</th>
+                            </tr>
+                        </thead>
+                        <tbody id="historyTableBody">
+                            <tr><td colspan="4" class="p-3 text-center text-slate-500">Cargando historial de la nube...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Panel Lateral (Lista de Inventario / Racks) -->
+        <div class="col-span-1 glass-panel rounded-xl flex flex-col overflow-hidden h-[630px]">
+            <div class="p-4 border-b border-slate-700 bg-slate-800/50 flex justify-between items-center">
+                <h3 class="font-bold text-white">Desglose de Racks</h3>
+            </div>
+            <div id="inventory-list" class="p-3 flex-1 overflow-y-auto flex flex-col gap-2">
+                <!-- Generado por JS -->
+            </div>
+        </div>
+    </main>
+
+    <!-- Modal de Reporte e IA -->
+    <div id="report-modal" class="fixed inset-0 bg-black/90 z-50 hidden flex items-center justify-center p-2 md:p-6 backdrop-blur-sm">
+        <div class="bg-[#111827] border border-gray-700 w-full max-w-6xl h-full max-h-[95vh] overflow-y-auto shadow-2xl flex flex-col font-sans">
+            <div class="px-6 py-4 border-b border-gray-700 bg-[#1f2937] flex justify-between items-center sticky top-0 z-10 shadow-md">
+                <div class="flex items-center gap-3">
+                    <div class="w-8 h-8 bg-yellow-500 rounded text-black flex items-center justify-center font-bold text-xl">📊</div>
+                    <div>
+                        <h2 class="text-xl font-semibold text-gray-100 leading-tight">Dashboard de Inventario (Power BI View)</h2>
+                        <p class="text-xs text-gray-400 mt-0.5">Turno analizado: <span id="report-subtitle" class="font-medium text-blue-400"></span></p>
+                    </div>
+                </div>
+                <div>
+                    <button onclick="closeReport()" class="text-gray-400 hover:text-white transition-colors bg-gray-700 hover:bg-gray-600 rounded px-4 py-1.5 text-sm font-semibold">
+                        Cerrar Dashboard
+                    </button>
+                </div>
+            </div>
+            
+            <div class="p-6 grid grid-cols-1 lg:grid-cols-4 gap-4 bg-[#111827] flex-1">
+                <div class="col-span-1 lg:col-span-4 grid grid-cols-2 md:grid-cols-4 gap-4 mb-2">
+                    <div class="power-bi-card">
+                        <div class="text-gray-400 text-xs font-semibold uppercase mb-1">Total Items Base</div>
+                        <div class="text-3xl font-light text-white" id="rep-total">0</div>
+                        <div class="text-xs text-gray-500 mt-2">Stock teórico</div>
+                    </div>
+                    <div class="power-bi-card teal">
+                        <div class="text-gray-400 text-xs font-semibold uppercase mb-1">Items Escaneados</div>
+                        <div class="text-3xl font-light text-white" id="rep-scanned">0</div>
+                        <div class="text-xs mt-2 font-medium" id="rep-scanned-trend">-</div>
+                    </div>
+                    <div class="power-bi-card red">
+                        <div class="text-gray-400 text-xs font-semibold uppercase mb-1">Discrepancias (Faltantes)</div>
+                        <div class="text-3xl font-light text-white" id="rep-pending">0</div>
+                        <div class="text-xs mt-2 font-medium" id="rep-pending-trend">-</div>
+                    </div>
+                    <div class="power-bi-card orange">
+                        <div class="text-gray-400 text-xs font-semibold uppercase mb-1">Batería Restante</div>
+                        <div class="text-3xl font-light text-white" id="rep-battery">0%</div>
+                        <div class="text-xs mt-2 font-medium" id="rep-battery-trend">-</div>
+                    </div>
+                </div>
+
+                <div class="col-span-1 lg:col-span-1 bg-[#1f2937] p-4 shadow-sm flex flex-col border border-gray-800">
+                    <h3 class="text-gray-200 font-semibold mb-3 flex items-center gap-2 text-sm border-b border-gray-700 pb-2">
+                        <span class="text-purple-400">✨</span> Narrativa Inteligente IA
+                    </h3>
+                    <div id="ai-insights" class="text-sm text-gray-300 space-y-4 flex-1 overflow-y-auto pr-2"></div>
+                </div>
+
+                <div class="col-span-1 lg:col-span-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <div class="bg-[#1f2937] p-4 shadow-sm border border-gray-800 md:col-span-2">
+                        <h3 class="text-gray-200 font-semibold mb-3 text-sm">Histórico de Exactitud de Inventario</h3>
+                        <div class="w-full h-56 relative"><canvas id="chart-comparison"></canvas></div>
+                    </div>
+                    <div class="bg-[#1f2937] p-4 shadow-sm border border-gray-800">
+                        <h3 class="text-gray-200 font-semibold mb-3 text-sm">Proporción del Turno Actual</h3>
+                        <div class="w-full h-56 relative flex justify-center"><canvas id="chart-accuracy"></canvas></div>
+                    </div>
+                    <div class="bg-[#1f2937] p-4 shadow-sm border border-gray-800 md:col-span-1">
+                        <h3 class="text-gray-200 font-semibold mb-3 text-sm">Discrepancias por Ubicación</h3>
+                        <div class="w-full h-48 relative"><canvas id="chart-zones"></canvas></div>
+                    </div>
+                    <div class="bg-[#1f2937] p-4 shadow-sm border border-gray-800 md:col-span-2">
+                        <h3 class="text-gray-200 font-semibold mb-3 text-sm">Tendencia de Eficiencia Energética</h3>
+                        <div class="w-full h-48 relative"><canvas id="chart-battery"></canvas></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Script de Inicialización y Lógica -->
+    <script>
+        const firebaseConfig = {
+            apiKey: "AIzaSyCpx08YAxqvFLDYGySkTx3c4xo1Zf3fbyM",
+            authDomain: "drone-warehouse.firebaseapp.com",
+            projectId: "drone-warehouse",
+            storageBucket: "drone-warehouse.firebasestorage.app",
+            messagingSenderId: "543294591270",
+            appId: "1:543294591270:web:48df8825cc8ea5b24571e7",
+            measurementId: "G-CCN7BT6869"
+        };
+
+        let db = null;
+        try {
+            firebase.initializeApp(firebaseConfig);
+            db = firebase.firestore();
+            firebase.auth().signInAnonymously().then(() => {
+                const cloudEl = document.getElementById('cloudStatus');
+                if(cloudEl) {
+                    cloudEl.innerText = "Conectado";
+                    cloudEl.className = "text-base text-green-400 font-bold";
+                }
+                loadFlightHistory();
+            }).catch(err => {
+                console.warn("Auth warning:", err);
+                const cloudEl = document.getElementById('cloudStatus');
+                if(cloudEl) cloudEl.innerText = "Modo Local";
+                loadFlightHistoryFromLocal();
+            });
+        } catch(e) {
+            console.error("Firebase init error:", e);
+            loadFlightHistoryFromLocal();
+        }
+
+        window.saveReportToCloud = async (reportData) => {
+            // Guardar siempre en localStorage primero para disponibilidad inmediata en la UI
+            const local = JSON.parse(localStorage.getItem('drone_reports') || '[]');
+            local.push(reportData);
+            localStorage.setItem('drone_reports', JSON.stringify(local));
+
+            if (db) {
+                try {
+                    await db.collection("vuelos_drone").add({
+                        ...reportData,
+                        timestampServer: firebase.firestore.FieldValue.serverTimestamp()
+                    });
+                } catch(err) {
+                    console.error("Error sincronizando con nube:", err);
+                }
+            }
+            loadFlightHistory();
+        };
+
+        function loadFlightHistory() {
+            const tbody = document.getElementById('historyTableBody');
+            if(!tbody) return;
+
+            // Primero cargamos de localStorage para respuesta instantánea
+            const local = JSON.parse(localStorage.getItem('drone_reports') || '[]');
+            
+            if(!db) {
+                loadFlightHistoryFromLocal();
+                return;
+            }
+
+            db.collection("vuelos_drone").orderBy("timestamp", "desc").limit(6).get()
+            .then(snapshot => {
+                tbody.innerHTML = '';
+                let items = [];
+                snapshot.forEach(doc => {
+                    items.push(doc.data());
+                });
+                
+                // Si la nube está vacía pero hay datos locales, usamos locales
+                if(items.length === 0) {
+                    loadFlightHistoryFromLocal();
+                    return;
+                }
+
+                items.forEach(data => {
+                    appendHistoryRow(tbody, data);
+                });
+            }).catch(() => {
+                loadFlightHistoryFromLocal();
+            });
+        }
+
+        function loadFlightHistoryFromLocal() {
+            const tbody = document.getElementById('historyTableBody');
+            if(!tbody) return;
+            const local = JSON.parse(localStorage.getItem('drone_reports') || '[]');
+            tbody.innerHTML = '';
+            if(local.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="4" class="p-3 text-center text-slate-500">No hay vuelos registrados aún. Completa un vuelo para ver el reporte.</td></tr>`;
+                return;
+            }
+            local.slice(-6).reverse().forEach(data => {
+                appendHistoryRow(tbody, data);
+            });
+        }
+
+        function appendHistoryRow(tbody, data) {
+            // Evitar duplicados visuales basados en turno/fecha
+            tbody.innerHTML += `
+                <tr class="border-b border-slate-800 hover:bg-slate-800/50 cursor-pointer" onclick='loadReportSnapshot(${JSON.stringify(data)})'>
+                    <td class="p-2 font-mono text-sky-400">${data.shift || 'Turno Reciente'}</td>
+                    <td class="p-2">${data.scanned} / ${data.total}</td>
+                    <td class="p-2 text-green-400">${data.batteryLeft}%</td>
+                    <td class="p-2"><button class="bg-blue-600 hover:bg-blue-500 text-white px-2 py-1 rounded text-[10px]">Ver Dashboard</button></td>
+                </tr>
+            `;
+        }
+
+        window.loadReportSnapshot = (data) => {
+            scanHistory.push(data);
+            showReportModal();
+            scanHistory.pop();
+        };
+
+        // Simulación lógica
+        let timeState = { day: 1, isMorning: true };
+        let scanHistory = [];
+        let simSpeedMult = 2;
+        let is3DView = false;
+
+        let canvas2D, ctx;
+        let products = [];
+        let waypoints = [];
+        let drone = { x: 50, y: 50, speed: 150, angle: 0, state: 'idle', battery: 100 };
+        let waypointIdx = 0;
+        let running = false;
+        let lastTime = 0;
+        let globalTime = 0;
+        let scannedCount = 0;
+        let scanLasers = [];
+        let particles = [];
+
+        let chartComparisonObj = null;
+        let chartAccuracyObj = null;
+        let chartZonesObj = null;
+        let chartBatteryObj = null;
+
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+
+        let scene, camera, renderer;
+        let fpvCamera, fpvRenderer;
+        let droneMesh;
+        let droneRotors = [];
+        let scannerLight;
+        let scannerCone;
+        let rackMeshes = [];
+        let ambientLight, dirLight, dirLight2;
+        let isNightMode = false;
+
+        const mockCSV = `SKU,Producto,Cantidad,Ubicacion
+R1-001,Motor DC 12V,15,Rack A1
+R1-002,Placa Arduino,45,Rack A1
+R1-003,Sensores Ultrasonicos,8,Rack A1
+R1-004,Cables Jumper,30,Rack A1
+R2-001,Engranajes (Set),22,Rack B1
+R2-002,Rodamientos,120,Rack B1
+R2-003,Baterías LiPo,80,Rack B1
+R3-001,Chasis Aluminio,12,Rack C1
+R3-002,Hélices repuesto,28,Rack C1
+R3-003,Cinta Aislante,60,Rack C1
+R4-001,Tornillos M3,200,Rack D1
+R4-002,Tuercas M3,200,Rack D1`;
+
+        window.addEventListener('DOMContentLoaded', () => {
+            canvas2D = document.getElementById("warehouse-2d");
+            if(canvas2D) {
+                ctx = canvas2D.getContext("2d");
+                canvas2D.width = canvas2D.parentElement.clientWidth;
+                canvas2D.height = canvas2D.parentElement.clientHeight;
+            }
+            
+            init3D();
+            loadData();
+            updateTimeUI();
+            
+            const container = document.querySelector('.view-container');
+            if(container) container.addEventListener('click', handleViewClick);
+            
+            requestAnimationFrame(time => {
+                lastTime = time;
+                gameLoop(time);
+            });
+        });
+
+        window.addEventListener('resize', () => {
+            if(canvas2D && canvas2D.parentElement) {
+                canvas2D.width = canvas2D.parentElement.clientWidth;
+                canvas2D.height = canvas2D.parentElement.clientHeight;
+            }
+            if (renderer) {
+                camera.aspect = canvas2D.width / canvas2D.height;
+                camera.updateProjectionMatrix();
+                renderer.setSize(canvas2D.width, canvas2D.height);
+            }
+            draw2DWarehouse();
+        });
+
+        function loadData() {
+            const lines = mockCSV.trim().split('\n');
+            const dataLines = lines.slice(1);
+            
+            const cols = 4;
+            const startX = 150;
+            const startY = 120;
+            const spaceX = (canvas2D ? canvas2D.width - 200 : 800) / (cols - 1);
+            const spaceY = 130;
+            
+            products = dataLines.map((line, index) => {
+                const [sku, nombre, cantidad, ubicacion] = line.split(',');
+                const row = Math.floor(index / cols);
+                const col = index % cols;
+                
+                return {
+                    id: sku, name: nombre, qty: cantidad, loc: ubicacion,
+                    x: startX + col * spaceX,
+                    y: startY + row * spaceY,
+                    scanned: false, scanProgress: 0,
+                    isMissing: Math.random() < 0.05
+                };
+            });
+
+            generateWaypoints(Math.ceil(products.length / cols));
+            create3DRacks();
+            updateUI();
+            renderInventoryList();
+            draw2DWarehouse();
+        }
+
+        function generateWaypoints(rows) {
+            waypoints = [{x: 50, y: 60}];
+            let currentY = 60;
+            const rightEdge = canvas2D ? canvas2D.width - 50 : 900;
+            
+            for (let i = 0; i <= rows; i++) {
+                if (i % 2 === 0) {
+                    waypoints.push({x: rightEdge, y: currentY});
+                    if (i < rows) { currentY += 130; waypoints.push({x: rightEdge, y: currentY}); }
+                } else {
+                    waypoints.push({x: 50, y: currentY});
+                    if (i < rows) { currentY += 130; waypoints.push({x: 50, y: currentY}); }
+                }
+            }
+            waypoints.push({x: 50, y: 60});
+        }
+
+        function advanceTime() {
+            if (running) return;
+            if (timeState.isMorning) {
+                timeState.isMorning = false;
+            } else {
+                timeState.isMorning = true;
+                timeState.day++;
+                products.forEach(p => { p.isMissing = Math.random() < 0.08; });
+            }
+            resetMission();
+            updateTimeUI();
+        }
+
+        function updateTimeUI() {
+            const timeStr = timeState.isMorning ? "Mañana" : "Tarde";
+            const el = document.getElementById("time-display");
+            if(el) el.textContent = `Día ${timeState.day} - ${timeStr}`;
+        }
+
+        function startMission() {
+            if (running || products.length === 0) return;
+            if (waypointIdx >= waypoints.length - 1) resetMission();
+            
+            running = true;
+            drone.state = 'flying';
+            lastTime = performance.now();
+            setStatus('Escaneando...', 'bg-emerald-500', 'bg-emerald-400');
+        }
+
+        function pauseMission() {
+            running = false;
+            drone.state = 'idle';
+            setStatus('Pausado', 'bg-yellow-500', 'bg-yellow-400');
+        }
+
+        function resetMission() {
+            running = false;
+            drone.state = 'idle';
+            drone.battery = 100;
+            drone.x = waypoints[0].x;
+            drone.y = waypoints[0].y;
+            drone.angle = 0;
+            waypointIdx = 0;
+            scannedCount = 0;
+            scanLasers = [];
+            particles = [];
+            products.forEach(p => { p.scanned = false; p.scanProgress = 0; });
+            
+            if(droneMesh) {
+                droneMesh.position.set(mapX(drone.x), 15, mapZ(drone.y));
+                droneMesh.rotation.y = 0;
+            }
+
+            updateUI();
+            renderInventoryList();
+            draw2DWarehouse();
+            setStatus('En Base', 'bg-slate-500', 'bg-slate-400');
+        }
+
+        function setStatus(text, dotClass, pingClass) {
+            const st = document.getElementById("status");
+            const dot = document.getElementById("status-dot");
+            const ping = document.getElementById("status-ping");
+            if(st) st.textContent = text;
+            if(dot) dot.className = `relative inline-flex rounded-full h-3 w-3 ${dotClass}`;
+            if(ping) {
+                if (running) {
+                    ping.className = `animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${pingClass}`;
+                    ping.style.display = 'block';
+                } else {
+                    ping.style.display = 'none';
+                }
+            }
+        }
+
+        function updateSpeed(val) {
+            simSpeedMult = parseFloat(val);
+            const valEl = document.getElementById("speed-val");
+            if(valEl) valEl.textContent = val + "x";
+        }
+
+        function toggleView() {
+            is3DView = !is3DView;
+            const c2d = document.getElementById('warehouse-2d');
+            const c3d = document.getElementById('canvas-3d');
+            const lbl = document.getElementById('view-label');
+            const btn = document.getElementById('btn-view');
+            const fpv = document.getElementById('fpv-container');
+
+            if (is3DView) {
+                if(c2d) c2d.style.display = 'none';
+                if(c3d) c3d.style.display = 'block';
+                if(fpv) fpv.style.display = 'block';
+                if(lbl) lbl.textContent = 'Vista 3D (Simulador)';
+                if(btn) {
+                    btn.textContent = '👁 Cambiar a 2D';
+                    btn.classList.replace('bg-purple-600', 'bg-pink-600');
+                }
+            } else {
+                if(c2d) c2d.style.display = 'block';
+                if(c3d) c3d.style.display = 'none';
+                if(fpv) fpv.style.display = 'none';
+                if(lbl) lbl.textContent = 'Vista 2D (Planta)';
+                if(btn) {
+                    btn.textContent = '👁 Cambiar a 3D';
+                    btn.classList.replace('bg-pink-600', 'bg-purple-600');
+                }
+            }
+        }
+
+        function toggleNightMode() {
+            isNightMode = !isNightMode;
+            const btn = document.getElementById('btn-night');
+            if (isNightMode) {
+                if(ambientLight) ambientLight.intensity = 0.2;
+                if(dirLight) dirLight.intensity = 0.1;
+                if(dirLight2) dirLight2.intensity = 0.1;
+                if(scene && scene.fog) scene.fog.color.setHex(0x020617);
+                if(btn) {
+                    btn.innerHTML = '☀️ Modo Diurno';
+                    btn.classList.replace('bg-slate-900', 'bg-amber-600');
+                }
+            } else {
+                if(ambientLight) ambientLight.intensity = 2.5;
+                if(dirLight) dirLight.intensity = 1.5;
+                if(dirLight2) dirLight2.intensity = 0.8;
+                if(scene && scene.fog) scene.fog.color.setHex(0x0f172a);
+                if(btn) {
+                    btn.innerHTML = '🌙 Modo Nocturno';
+                    btn.classList.replace('bg-amber-600', 'bg-slate-900');
+                }
+            }
+        }
+
+        function gameLoop(time) {
+            const dt = ((time - lastTime) / 1000) * simSpeedMult; 
+            lastTime = time;
+            globalTime += dt;
+            
+            if (running) updateLogic(dt);
+            
+            if (!is3DView) {
+                draw2DWarehouse();
+            } else {
+                update3DVisuals(dt);
+                if(renderer && scene && camera) renderer.render(scene, camera);
+                if (fpvRenderer && fpvCamera && scene) fpvRenderer.render(scene, fpvCamera);
+            }
+            requestAnimationFrame(gameLoop);
+        }
+
+        function updateLogic(dt) {
+            drone.battery -= dt * 1.8; 
+            if (drone.battery <= 0) {
+                drone.battery = 0;
+                finishMission("Batería Agotada");
+                return;
+            }
+
+            particles = particles.filter(p => p.life > 0);
+            particles.forEach(p => { p.x += p.vx*dt; p.y += p.vy*dt; p.life -= dt*1.5; });
+            scanLasers = scanLasers.filter(l => l.life > 0);
+            scanLasers.forEach(l => l.life -= dt);
+
+            if (waypointIdx < waypoints.length) {
+                const target = waypoints[waypointIdx];
+                const dx = target.x - drone.x;
+                const dy = target.y - drone.y;
+                const dist = Math.hypot(dx, dy);
+                
+                let targetAngle = Math.atan2(dy, dx);
+                let angleDiff = targetAngle - drone.angle;
+                while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+                while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+                drone.angle += angleDiff * 5 * dt; 
+
+                if (dist < 5) {
+                    waypointIdx++;
+                    if (waypointIdx >= waypoints.length) finishMission("Misión Completada");
+                } else {
+                    const move = Math.min(drone.speed * dt, dist);
+                    drone.x += (dx / dist) * move;
+                    drone.y += (dy / dist) * move;
+                }
+            }
+
+            let uiNeedsUpdate = false;
+            products.forEach((p, idx) => {
+                if (p.scanned || p.isMissing) return;
+                
+                const dist = Math.hypot(drone.x - p.x, drone.y - p.y);
+                if (dist < 120) {
+                    p.scanProgress += dt * 1.5;
+                    if (Math.random() < 0.2) scanLasers.push({ x1: drone.x, y1: drone.y, x2: p.x, y2: p.y, life: 0.1 });
+
+                    if (p.scanProgress >= 1) {
+                        p.scanned = true;
+                        scannedCount++;
+                        uiNeedsUpdate = true;
+                        scanLasers.push({ x1: drone.x, y1: drone.y, x2: p.x, y2: p.y, life: 0.4, confirm: true });
+                        createParticles(p.x, p.y);
+                        updateRack3DColor(idx, 0x10b981);
+                    }
+                } else {
+                    p.scanProgress = Math.max(0, p.scanProgress - dt);
+                }
+            });
+
+            if (uiNeedsUpdate) {
+                updateUI();
+                renderInventoryList();
+            }
+        }
+
+        function finishMission(reason) {
+            running = false;
+            drone.state = 'idle';
+            setStatus(reason, reason.includes('Completada') ? 'bg-blue-500' : 'bg-red-500', '');
+            
+            const shiftName = `Día ${timeState.day} - ${timeState.isMorning ? 'Mañana' : 'Tarde'}`;
+            const scannedItems = products.filter(p => p.scanned).length;
+            const missingItems = products.length - scannedItems;
+            
+            const newReport = {
+                shift: shiftName,
+                total: products.length,
+                scanned: scannedItems,
+                missing: missingItems,
+                batteryLeft: Math.round(drone.battery),
+                raw: JSON.parse(JSON.stringify(products))
+            };
+            
+            scanHistory.push(newReport);
+            if (window.saveReportToCloud) window.saveReportToCloud(newReport);
+
+            updateUI();
+            setTimeout(showReportModal, 800);
+        }
+
+        function draw2DWarehouse() {
+            if(!ctx || !canvas2D) return;
+            ctx.clearRect(0, 0, canvas2D.width, canvas2D.height);
+
+            ctx.fillStyle = "rgba(255,255,255,0.02)";
+            for(let y = 60; y < canvas2D.height; y += 130) {
+                ctx.fillRect(40, y - 25, canvas2D.width - 80, 50);
+            }
+
+            if (waypoints.length > 0) {
+                ctx.beginPath();
+                ctx.moveTo(waypoints[0].x, waypoints[0].y);
+                for(let i=1; i<waypoints.length; i++) ctx.lineTo(waypoints[i].x, waypoints[i].y);
+                ctx.strokeStyle = "rgba(59, 130, 246, 0.2)"; 
+                ctx.lineWidth = 2; ctx.setLineDash([10, 10]); ctx.stroke(); ctx.setLineDash([]);
+            }
+
+            if (waypoints.length > 0) {
+                ctx.fillStyle = "rgba(16, 185, 129, 0.3)"; ctx.fillRect(waypoints[0].x - 20, waypoints[0].y - 20, 40, 40);
+                ctx.fillStyle = "#10b981"; ctx.font = "bold 10px Inter"; ctx.textAlign = "center";
+                ctx.fillText("BASE", waypoints[0].x, waypoints[0].y + 4);
+            }
+
+            products.forEach(p => {
+                ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(p.x - 45, p.y - 30 + 8, 90, 60);
+                ctx.fillStyle = "#1e293b"; ctx.fillRect(p.x - 45, p.y - 30, 90, 60);
+                ctx.strokeStyle = "#334155"; ctx.lineWidth = 2; ctx.strokeRect(p.x - 45, p.y - 30, 90, 60);
+
+                if (p.scanProgress > 0 && !p.scanned) { ctx.shadowBlur = 15; ctx.shadowColor = "#3b82f6"; }
+                
+                ctx.fillStyle = p.scanned ? "#10b981" : (p.scanProgress > 0 ? "#3b82f6" : "#64748b");
+                if (p.isMissing && !running && drone.state === 'idle' && waypointIdx > 0) ctx.fillStyle = "#ef4444"; 
+                
+                ctx.fillRect(p.x - 20, p.y - 15, 40, 30);
+                ctx.shadowBlur = 0; 
+
+                ctx.fillStyle = "#f8fafc"; ctx.font = "bold 11px Inter"; ctx.textAlign = "center";
+                ctx.fillText(p.loc, p.x, p.y - 18);
+                ctx.fillStyle = p.scanned ? "#064e3b" : "#94a3b8"; ctx.font = "10px Inter";
+                ctx.fillText(p.id, p.x, p.y + 2);
+            });
+
+            scanLasers.forEach(l => {
+                ctx.beginPath(); ctx.moveTo(l.x1, l.y1); ctx.lineTo(l.x2, l.y2);
+                ctx.strokeStyle = l.confirm ? `rgba(16, 185, 129, ${l.life*2})` : `rgba(59, 130, 246, ${l.life*3})`;
+                ctx.lineWidth = l.confirm ? 3 : 1; ctx.stroke();
+            });
+
+            particles.forEach(p => {
+                ctx.fillStyle = p.color; ctx.globalAlpha = Math.max(0, p.life);
+                ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI*2); ctx.fill();
+            });
+            ctx.globalAlpha = 1.0;
+
+            ctx.save();
+            ctx.translate(drone.x, drone.y);
+            ctx.rotate(drone.angle);
+            ctx.strokeStyle = "#94a3b8"; ctx.lineWidth = 3;
+            ctx.beginPath(); ctx.moveTo(-12, -12); ctx.lineTo(12, 12); ctx.moveTo(12, -12); ctx.lineTo(-12, 12); ctx.stroke();
+            ctx.fillStyle = "#2563eb"; ctx.beginPath(); ctx.arc(0, 0, 8, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = running ? "#10b981" : "#ef4444"; ctx.beginPath(); ctx.arc(8, 0, 2, 0, Math.PI*2); ctx.fill();
+            ctx.restore();
+        }
+
+        function createParticles(x, y) {
+            for (let i = 0; i < 6; i++) {
+                particles.push({
+                    x: x, y: y,
+                    vx: (Math.random() - 0.5) * 60, vy: (Math.random() - 0.5) * 60,
+                    life: 1.0, size: Math.random() * 2 + 1,
+                    color: Math.random() > 0.5 ? '#10b981' : '#3b82f6'
+                });
+            }
+        }
+
+        function init3D() {
+            const canvas3D = document.getElementById("canvas-3d");
+            if(!canvas3D) return;
+            renderer = new THREE.WebGLRenderer({ canvas: canvas3D, antialias: true, alpha: true });
+            
+            const canvasFPV = document.getElementById("canvas-fpv");
+            if(canvasFPV) {
+                fpvRenderer = new THREE.WebGLRenderer({ canvas: canvasFPV, antialias: true });
+                fpvRenderer.setSize(192, 144);
+            }
+
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x0f172a, 0.003);
+
+            camera = new THREE.PerspectiveCamera(45, 1, 1, 1000);
+            camera.position.set(0, 350, 400);
+            camera.lookAt(0, 0, 0);
+
+            ambientLight = new THREE.AmbientLight(0x404040, 2.5);
+            scene.add(ambientLight);
+            
+            dirLight = new THREE.DirectionalLight(0xe2e8f0, 1.5);
+            dirLight.position.set(100, 300, 150);
+            scene.add(dirLight);
+            
+            dirLight2 = new THREE.DirectionalLight(0x38bdf8, 0.8);
+            dirLight2.position.set(-100, 200, -150);
+            scene.add(dirLight2);
+
+            const gridHelper = new THREE.GridHelper(1000, 25, 0x475569, 0x1e293b);
+            gridHelper.position.y = 0.1;
+            scene.add(gridHelper);
+            
+            const floorGeo = new THREE.PlaneGeometry(1000, 1000);
+            const floorMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.8 });
+            const floor = new THREE.Mesh(floorGeo, floorMat);
+            floor.rotation.x = -Math.PI / 2;
+            scene.add(floor);
+
+            droneMesh = createDetailedDrone();
+            scene.add(droneMesh);
+            
+            fpvCamera = new THREE.PerspectiveCamera(60, 192/144, 0.1, 500);
+            fpvCamera.position.set(12, -2, 0); 
+            const fpvTarget = new THREE.Object3D();
+            fpvTarget.position.set(50, -35, 0); 
+            droneMesh.add(fpvTarget);
+            fpvCamera.lookAt(fpvTarget.position);
+            droneMesh.add(fpvCamera);
+        }
+
+        function createDetailedDrone() {
+            const group = new THREE.Group();
+            const bodyGeo = new THREE.CylinderGeometry(8, 8, 5, 8);
+            const bodyMat = new THREE.MeshStandardMaterial({ color: 0x1e40af, metalness: 0.7, roughness: 0.2 });
+            const body = new THREE.Mesh(bodyGeo, bodyMat);
+            body.rotation.y = Math.PI / 8;
+            group.add(body);
+            
+            const armGeo = new THREE.BoxGeometry(28, 1.5, 1.5);
+            const armMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.8 });
+            const arm1 = new THREE.Mesh(armGeo, armMat);
+            const arm2 = new THREE.Mesh(armGeo, armMat);
+            arm2.rotation.y = Math.PI / 2;
+            group.add(arm1, arm2);
+
+            const rotorGeo = new THREE.CylinderGeometry(5, 5, 0.5, 12);
+            const rotorMat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.5 });
+            const positions = [ [-14,0], [14,0], [0,-14], [0,14] ];
+            
+            positions.forEach(pos => {
+                const motor = new THREE.Mesh(new THREE.CylinderGeometry(2, 2, 3, 8), new THREE.MeshStandardMaterial({color: 0x1e293b, metalness: 0.9}));
+                motor.position.set(pos[0], 1, pos[1]);
+                group.add(motor);
+                
+                const rotor = new THREE.Mesh(rotorGeo, rotorMat);
+                rotor.position.set(pos[0], 3, pos[1]);
+                droneRotors.push(rotor);
+                group.add(rotor);
+            });
+
+            scannerLight = new THREE.SpotLight(0x3b82f6, 0, 150, Math.PI/5, 0.5, 1);
+            scannerLight.position.set(0, -2, 0);
+            scannerLight.target.position.set(0, -50, 0);
+            group.add(scannerLight);
+            group.add(scannerLight.target);
+
+            const coneGeo = new THREE.CylinderGeometry(0.1, 15, 40, 16, 1, true);
+            coneGeo.translate(0, -20, 0);
+            const coneMat = new THREE.MeshBasicMaterial({ color: 0x3b82f6, transparent: true, opacity: 0.0, side: THREE.DoubleSide, blending: THREE.AdditiveBlending });
+            scannerCone = new THREE.Mesh(coneGeo, coneMat);
+            scannerCone.position.set(0, -2, 0);
+            group.add(scannerCone);
+
+            return group;
+        }
+
+        function mapX(x2d) { return canvas2D ? x2d - canvas2D.width/2 : x2d; }
+        function mapZ(y2d) { return canvas2D ? y2d - canvas2D.height/2 : y2d; }
+
+        function create3DRacks() {
+            rackMeshes.forEach(m => scene.remove(m));
+            rackMeshes = [];
+
+            products.forEach((p, idx) => {
+                const rackGroup = createDetailedRack();
+                rackGroup.position.set(mapX(p.x), 0, mapZ(p.y));
+                rackGroup.userData.productIndex = idx;
+                scene.add(rackGroup);
+                rackMeshes.push(rackGroup);
+            });
+        }
+
+        function createDetailedRack() {
+            const group = new THREE.Group();
+            const postMat = new THREE.MeshStandardMaterial({color: 0x475569, metalness: 0.8, roughness: 0.4});
+            const postGeo = new THREE.BoxGeometry(2, 50, 2);
+            [[-18,-13], [18,-13], [-18,13], [18,13]].forEach(pos => {
+                const post = new THREE.Mesh(postGeo, postMat);
+                post.position.set(pos[0], 25, pos[1]);
+                group.add(post);
+            });
+
+            const shelfMat = new THREE.MeshStandardMaterial({color: 0x334155, metalness: 0.5});
+            const shelfGeo = new THREE.BoxGeometry(40, 1, 30);
+            [10, 25, 40].forEach(y => {
+                const shelf = new THREE.Mesh(shelfGeo, shelfMat);
+                shelf.position.y = y;
+                group.add(shelf);
+            });
+
+            const boxGeo = new THREE.BoxGeometry(14, 10, 18);
+            const boxMat = new THREE.MeshStandardMaterial({color: 0x64748b, roughness: 0.9});
+            const targetBox = new THREE.Mesh(boxGeo, boxMat);
+            targetBox.position.set(0, 30.5, 0);
+            targetBox.userData.isTargetBox = true; 
+            group.add(targetBox);
+
+            return group;
+        }
+
+        function updateRack3DColor(index, hexColor) {
+            if (rackMeshes[index]) {
+                rackMeshes[index].children.forEach(child => {
+                    if (child.userData.isTargetBox) {
+                        child.material.color.setHex(hexColor);
+                        if (hexColor === 0x10b981) child.material.emissive.setHex(0x064e3b);
+                    }
+                });
+            }
+        }
+
+        function update3DVisuals(dt) {
+            if (droneMesh) {
+                const targetX = mapX(drone.x);
+                const targetZ = mapZ(drone.y);
+                const diffX = targetX - droneMesh.position.x;
+                const diffZ = targetZ - droneMesh.position.z;
+                
+                droneMesh.position.x += diffX * 5 * dt;
+                droneMesh.position.z += diffZ * 5 * dt;
+                droneMesh.position.y = drone.state === 'flying' ? 60 + Math.sin(globalTime * 3) * 2 : 15;
+                
+                droneMesh.rotation.y = -drone.angle;
+                droneMesh.rotation.z = Math.max(-0.2, Math.min(0.2, -diffX * 0.015));
+                droneMesh.rotation.x = Math.max(-0.2, Math.min(0.2, diffZ * 0.015));
+            }
+            
+            droneRotors.forEach(r => { r.rotation.y += (drone.state === 'flying' ? 25 : 2) * dt; });
+
+            if (is3DView && droneMesh) {
+                camera.position.x += (droneMesh.position.x - camera.position.x) * 4 * dt;
+                camera.position.y += (180 - camera.position.y) * 4 * dt;
+                camera.position.z += (droneMesh.position.z + 200 - camera.position.z) * 4 * dt;
+                camera.lookAt(droneMesh.position);
+            }
+            
+            let isScanningAny = false;
+            products.forEach((p, idx) => {
+                if (!p.scanned && p.scanProgress > 0 && rackMeshes[idx]) {
+                    isScanningAny = true;
+                    updateRack3DColor(idx, 0x3b82f6);
+                }
+            });
+
+            if (isScanningAny) {
+                if(scannerCone) scannerCone.material.opacity = 0.4 + Math.random() * 0.3;
+                if(scannerLight) scannerLight.intensity = 5;
+            } else {
+                if(scannerCone) scannerCone.material.opacity = 0;
+                if(scannerLight) scannerLight.intensity = 0;
+            }
+        }
+
+        function updateUI() {
+            const tot = document.getElementById("total");
+            const scn = document.getElementById("scanned");
+            const prg = document.getElementById("progress");
+            const bat = document.getElementById("battery");
+            
+            if(tot) tot.textContent = products.length;
+            if(scn) scn.textContent = scannedCount;
+            const pct = products.length === 0 ? 0 : Math.round((scannedCount / products.length) * 100);
+            if(prg) prg.textContent = `${pct}%`;
+            if(bat) bat.textContent = Math.max(0, Math.round(drone.battery)) + "%";
+        }
+
+        function handleViewClick(event) {
+            const rect = event.currentTarget.getBoundingClientRect();
+            const x = event.clientX - rect.left;
+            const y = event.clientY - rect.top;
+
+            if (is3DView) {
+                mouse.x = (x / rect.width) * 2 - 1;
+                mouse.y = -(y / rect.height) * 2 + 1;
+                raycaster.setFromCamera(mouse, camera);
+                const intersects = raycaster.intersectObjects(rackMeshes, true);
+                if (intersects.length > 0) {
+                    let obj = intersects[0].object;
+                    let pIdx = undefined;
+                    while(obj) {
+                        if (obj.userData && obj.userData.productIndex !== undefined) {
+                            pIdx = obj.userData.productIndex;
+                            break;
+                        }
+                        obj = obj.parent;
+                    }
+                    if (pIdx !== undefined) showProductDetails(pIdx);
+                } else { hideProductDetails(); }
+            } else {
+                let clicked = false;
+                products.forEach((p, idx) => {
+                    const rx = p.x - 45;
+                    const ry = p.y - 30;
+                    if (x >= rx && x <= rx + 90 && y >= ry && y <= ry + 60) {
+                        showProductDetails(idx);
+                        clicked = true;
+                    }
+                });
+                if (!clicked) hideProductDetails();
+            }
+        }
+
+        function showProductDetails(index) {
+            const p = products[index];
+            const panel = document.getElementById('item-details-panel');
+            if(!panel) return;
+            panel.classList.remove('hidden');
+            
+            document.getElementById('detail-sku').textContent = p.id;
+            document.getElementById('detail-name').textContent = p.name;
+            document.getElementById('detail-loc').textContent = p.loc;
+            document.getElementById('detail-qty').textContent = p.qty + " uds.";
+            
+            const numCajas = Math.max(1, Math.ceil(p.qty / 15));
+            document.getElementById('detail-boxes').textContent = `📦 Distribuido en ${numCajas} caja(s)`;
+            
+            const statusEl = document.getElementById('detail-status');
+            if (p.scanned) {
+                statusEl.innerHTML = "✅ INVENTARIADO";
+                statusEl.className = "mt-2 text-xs font-bold text-center p-2 rounded bg-emerald-900/50 text-emerald-400 border border-emerald-700";
+            } else if (p.isMissing && !running && drone.state === 'idle' && waypointIdx > 0) {
+                statusEl.innerHTML = "❌ EXTRAVIADO / ALERTA";
+                statusEl.className = "mt-2 text-xs font-bold text-center p-2 rounded bg-red-900/50 text-red-400 border border-red-700 animate-pulse";
+            } else {
+                statusEl.innerHTML = "⏳ PENDIENTE DE ESCANEO";
+                statusEl.className = "mt-2 text-xs font-bold text-center p-2 rounded bg-slate-800 text-slate-300 border border-slate-600";
+            }
+        }
+
+        function hideProductDetails() {
+            const panel = document.getElementById('item-details-panel');
+            if(panel) panel.classList.add('hidden');
+        }
+
+        function renderInventoryList() {
+            const container = document.getElementById("inventory-list");
+            if(!container) return;
+            container.innerHTML = products.map((p) => {
+                let statusClass = 'bg-slate-700/30 border-slate-600/30';
+                let statusText = '⏳ Pdte';
+                let textCol = 'text-slate-200';
+                
+                if (p.scanned) {
+                    statusClass = 'bg-emerald-900/40 border-emerald-500/30';
+                    statusText = '✔ OK';
+                    textCol = 'text-emerald-400';
+                } else if (!running && drone.state === 'idle' && waypointIdx > 0) {
+                    statusClass = 'bg-red-900/40 border-red-500/30';
+                    statusText = '❌ Falta';
+                    textCol = 'text-red-400';
+                }
+
+                return `
+                <div class="p-2 rounded-lg flex flex-col gap-1 border ${statusClass}">
+                    <div class="flex justify-between items-center">
+                        <span class="font-bold text-sm ${textCol}">${p.id}</span>
+                        <span class="text-xs px-2 py-0.5 rounded-full bg-black/30 ${textCol}">${statusText}</span>
+                    </div>
+                    <div class="text-slate-300 text-xs truncate">${p.name} | ${p.loc}</div>
+                </div>
+            `}).join("");
+        }
+
+        function showReportModal() {
+            const modal = document.getElementById('report-modal');
+            if(modal) modal.classList.remove('hidden');
+            const currHistory = scanHistory[scanHistory.length - 1];
+            const prevHistory = scanHistory.length > 1 ? scanHistory[scanHistory.length - 2] : null;
+            
+            document.getElementById('report-subtitle').textContent = currHistory.shift;
+            document.getElementById('rep-total').textContent = currHistory.total;
+            document.getElementById('rep-scanned').textContent = currHistory.scanned;
+            document.getElementById('rep-pending').textContent = currHistory.missing;
+            document.getElementById('rep-battery').textContent = currHistory.batteryLeft + '%';
+
+            const updateTrend = (elId, currVal, prevVal, isInverseGood = false) => {
+                const el = document.getElementById(elId);
+                if(!el) return;
+                if (!prevHistory) {
+                    el.textContent = "Base establecida";
+                    el.className = "text-xs mt-2 text-gray-500 font-medium";
+                    return;
+                }
+                const diff = currVal - prevVal;
+                if (diff === 0) {
+                    el.innerHTML = `<span class="text-gray-400">➖ Sin cambios</span>`;
+                } else {
+                    let isGood = isInverseGood ? diff < 0 : diff > 0;
+                    let color = isGood ? 'text-[#00b8aa]' : 'text-[#fd625e]';
+                    let icon = diff > 0 ? '▲' : '▼';
+                    el.innerHTML = `<span class="${color}">${icon} ${Math.abs(diff)}</span> <span class="text-gray-500">vs turno ant.</span>`;
+                }
+            };
+
+            updateTrend('rep-scanned-trend', currHistory.scanned, prevHistory?.scanned);
+            updateTrend('rep-pending-trend', currHistory.missing, prevHistory?.missing, true);
+            updateTrend('rep-battery-trend', currHistory.batteryLeft, prevHistory?.batteryLeft);
+
+            generateAIInsights();
+            renderCharts();
+        }
+
+        function closeReport() {
+            const modal = document.getElementById('report-modal');
+            if(modal) modal.classList.add('hidden');
+        }
+
+        function generateAIInsights() {
+            const insightBox = document.getElementById('ai-insights');
+            if (!insightBox || scanHistory.length === 0) return;
+            const curr = scanHistory[scanHistory.length - 1];
+            let html = '';
+
+            if (curr.missing === 0) {
+                html += `<p class="leading-relaxed"><strong class="text-white">Inventario perfecto.</strong> El 100% de los ${curr.total} items están en su ubicación asignada.</p>`;
+            } else {
+                const missingPct = ((curr.missing / curr.total) * 100).toFixed(1);
+                html += `<p class="leading-relaxed mb-2"><strong class="text-[#fd625e]">Alerta:</strong> Se detectó una discrepancia del <strong class="text-white">${missingPct}%</strong> (${curr.missing} items).</p>`;
+                
+                const missingItems = curr.raw.filter(p => !p.scanned);
+                const locations = {};
+                missingItems.forEach(i => locations[i.loc] = (locations[i.loc] || 0) + 1);
+                let worstLoc = Object.keys(locations).reduce((a, b) => locations[a] > locations[b] ? a : b);
+                html += `<p class="leading-relaxed">La zona crítica es <strong class="text-white">${worstLoc}</strong> con ${locations[worstLoc]} faltantes. Se sugiere auditoría cíclica en este rack.</p>`;
+            }
+            insightBox.innerHTML = html;
+        }
+
+        function renderCharts() {
+            if (chartComparisonObj) chartComparisonObj.destroy();
+            if (chartAccuracyObj) chartAccuracyObj.destroy();
+            if (chartZonesObj) chartZonesObj.destroy();
+            if (chartBatteryObj) chartBatteryObj.destroy();
+            
+            const pbiBlue = '#118DFF', pbiTeal = '#00B8AA', pbiRed = '#FD625E', pbiYellow = '#F2C80F', pbiPurple = '#8A2BE2';
+            
+            Chart.defaults.color = '#9ca3af';
+            Chart.defaults.font.family = 'Inter, sans-serif';
+
+            const recentHistory = scanHistory.slice(-6); 
+            const currentShift = scanHistory[scanHistory.length - 1];
+            const labels = recentHistory.map(h => h.shift);
+
+            const c1 = document.getElementById('chart-comparison');
+            if(c1) {
+                chartComparisonObj = new Chart(c1.getContext('2d'), {
+                    type: 'bar',
+                    data: {
+                        labels: labels,
+                        datasets: [
+                            { label: 'Encontrados', data: recentHistory.map(h => h.scanned), backgroundColor: pbiBlue },
+                            { label: 'Discrepancias', data: recentHistory.map(h => h.missing), backgroundColor: pbiRed }
+                        ]
+                    },
+                    options: { responsive: true, maintainAspectRatio: false, scales: { x: { stacked: true }, y: { stacked: true } } }
+                });
+            }
+
+            const c2 = document.getElementById('chart-accuracy');
+            if(c2) {
+                chartAccuracyObj = new Chart(c2.getContext('2d'), {
+                    type: 'doughnut',
+                    data: {
+                        labels: ['Correcto', 'Faltante'],
+                        datasets: [{ data: [currentShift.scanned, currentShift.missing], backgroundColor: [pbiTeal, pbiRed], borderWidth: 0 }]
+                    },
+                    options: { responsive: true, maintainAspectRatio: false, cutout: '80%' }
+                });
+            }
+
+            const missingByZone = {};
+            currentShift.raw.forEach(p => {
+                if (!missingByZone[p.loc]) missingByZone[p.loc] = 0;
+                if (!p.scanned) missingByZone[p.loc]++;
+            });
+            
+            const c3 = document.getElementById('chart-zones');
+            if(c3) {
+                chartZonesObj = new Chart(c3.getContext('2d'), {
+                    type: 'bar',
+                    data: { labels: Object.keys(missingByZone), datasets: [{ label: 'Faltantes', data: Object.values(missingByZone), backgroundColor: pbiPurple }] },
+                    options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false }
+                });
+            }
+
+            const c4 = document.getElementById('chart-battery');
+            if(c4) {
+                chartBatteryObj = new Chart(c4.getContext('2d'), {
+                    type: 'line',
+                    data: { labels: labels, datasets: [{ label: 'Batería (%)', data: recentHistory.map(h => h.batteryLeft), borderColor: pbiYellow, fill: true, backgroundColor: 'rgba(242, 200, 15, 0.1)' }] },
+                    options: { responsive: true, maintainAspectRatio: false, scales: { y: { max: 100 } } }
+                });
+            }
+        }
+    </script>
+</body>
+</html>
