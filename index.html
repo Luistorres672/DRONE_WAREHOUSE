@@ -93,6 +93,9 @@
                 <button onclick="advanceTime()" class="px-5 py-2 bg-yellow-600 hover:bg-yellow-500 text-white rounded-lg font-semibold transition shadow-lg shadow-yellow-500/30 flex items-center gap-2" title="Avanza al siguiente turno">
                     ⏱ Avanzar Turno
                 </button>
+                <button onclick="toggleManualMode()" id="btn-manual" class="px-5 py-2 bg-pink-600 hover:bg-pink-500 text-white rounded-lg font-semibold transition shadow-lg shadow-pink-500/30 flex items-center gap-2">
+                    🕹 Modo: Autónomo
+                </button>
                 <button onclick="toggleView()" id="btn-view" class="px-5 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg font-semibold transition shadow-lg shadow-purple-500/30">
                     👁 Cambiar a 3D
                 </button>
@@ -100,7 +103,7 @@
                     🌙 Modo Nocturno
                 </button>
                 <button onclick="exportToPowerBI()" class="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-semibold transition shadow-lg shadow-emerald-500/30 flex items-center gap-2">
-                    📊 Exportar CSV
+                    📊 Exportar CSV 
                 </button>
             </div>
             <div class="flex items-center gap-4">
@@ -127,13 +130,21 @@
                 <!-- Cámara FPV (Primera Persona) -->
                 <div id="fpv-container" class="absolute bottom-4 left-4 w-48 h-36 border-2 border-slate-400/50 rounded-xl overflow-hidden shadow-2xl shadow-blue-900/50 z-20 hidden bg-black">
                     <div class="absolute top-1 left-2 text-[10px] text-red-500 font-mono font-bold animate-pulse z-30">● REC FPV</div>
+                    <div class="absolute top-1 right-2 text-[9px] text-green-400 font-mono font-bold z-30">AI.VISION</div>
+                    
+                    <!-- Simulación de HUD de Visión Artificial -->
                     <div class="absolute inset-0 border border-white/10 pointer-events-none z-30 flex items-center justify-center">
-                        <div class="w-4 h-4 border border-green-500/50 rounded-full"></div>
+                        <div class="w-8 h-8 border-2 border-green-500/80 rounded animate-pulse" id="ai-target-box" style="display:none;"></div>
                         <div class="absolute w-full h-[1px] bg-green-500/20"></div>
                         <div class="absolute h-full w-[1px] bg-green-500/20"></div>
                     </div>
                     <canvas id="canvas-fpv"></canvas>
                 </div>
+
+                <!-- Botón de Aterrizaje Manual (Oculto por defecto) -->
+                <button id="btn-descender" onclick="landDrone()" class="absolute bottom-6 right-6 bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-3 rounded-xl font-bold shadow-[0_0_15px_rgba(16,185,129,0.5)] z-40 hidden animate-bounce flex items-center gap-2 border-2 border-emerald-400">
+                    🛬 Descender y Finalizar
+                </button>
 
                 <!-- Panel de Detalles de Inventario -->
                 <div id="item-details-panel" class="absolute top-4 right-4 bg-slate-900/95 border border-blue-500 rounded-xl p-4 shadow-2xl z-20 hidden backdrop-blur-md w-64 transition-all">
@@ -161,7 +172,7 @@
             <div class="glass-panel p-4 rounded-xl flex flex-col">
                 <div class="flex justify-between items-center mb-3">
                     <h3 class="font-bold text-white text-sm flex items-center gap-2">
-                        📊 Historial de Escaneos Anteriores (Cloud Firestore)
+                        📊 Historial de Escaneos Anteriores 
                     </h3>
                     <span class="text-xs text-slate-400">Selecciona un registro para abrir su reporte</span>
                 </div>
@@ -213,7 +224,7 @@
             </div>
             
             <div class="p-6 grid grid-cols-1 lg:grid-cols-4 gap-4 bg-[#111827] flex-1">
-                <div class="col-span-1 lg:col-span-4 grid grid-cols-2 md:grid-cols-4 gap-4 mb-2">
+                <div class="col-span-1 lg:col-span-4 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-2">
                     <div class="power-bi-card">
                         <div class="text-gray-400 text-xs font-semibold uppercase mb-1">Total Items Base</div>
                         <div class="text-3xl font-light text-white" id="rep-total">0</div>
@@ -225,7 +236,7 @@
                         <div class="text-xs mt-2 font-medium" id="rep-scanned-trend">-</div>
                     </div>
                     <div class="power-bi-card red">
-                        <div class="text-gray-400 text-xs font-semibold uppercase mb-1">Discrepancias (Faltantes)</div>
+                        <div class="text-gray-400 text-xs font-semibold uppercase mb-1">Discrepancias</div>
                         <div class="text-3xl font-light text-white" id="rep-pending">0</div>
                         <div class="text-xs mt-2 font-medium" id="rep-pending-trend">-</div>
                     </div>
@@ -233,6 +244,17 @@
                         <div class="text-gray-400 text-xs font-semibold uppercase mb-1">Batería Restante</div>
                         <div class="text-3xl font-light text-white" id="rep-battery">0%</div>
                         <div class="text-xs mt-2 font-medium" id="rep-battery-trend">-</div>
+                    </div>
+                    <!-- Nuevas tarjetas analíticas -->
+                    <div class="power-bi-card" style="border-left-color: #8A2BE2;">
+                        <div class="text-gray-400 text-xs font-semibold uppercase mb-1">Tiempo de Vuelo</div>
+                        <div class="text-3xl font-light text-white" id="rep-time">0s</div>
+                        <div class="text-xs text-purple-400 mt-2" id="rep-efficiency">0 items/seg</div>
+                    </div>
+                    <div class="power-bi-card" style="border-left-color: #e11d48;">
+                        <div class="text-gray-400 text-xs font-semibold uppercase mb-1">Riesgo Financiero</div>
+                        <div class="text-3xl font-light text-white" id="rep-loss">$0</div>
+                        <div class="text-xs text-rose-400 mt-2">Costo prom. $120/ud</div>
                     </div>
                 </div>
 
@@ -379,11 +401,30 @@
             scanHistory.pop();
         };
 
-        // Simulación lógica
+        // Simulación lógica y controles manuales
         let timeState = { day: 1, isMorning: true };
         let scanHistory = [];
         let simSpeedMult = 2;
         let is3DView = false;
+        let isManualMode = false;
+        let missionTime = 0; // Nueva variable para medir el tiempo real
+        let keys = { w: false, a: false, s: false, d: false };
+
+        window.addEventListener('keydown', (e) => {
+            if (isManualMode) {
+                if (e.key === 'w' || e.key === 'W') keys.w = true;
+                if (e.key === 'a' || e.key === 'A') keys.a = true;
+                if (e.key === 's' || e.key === 'S') keys.s = true;
+                if (e.key === 'd' || e.key === 'D') keys.d = true;
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            if (e.key === 'w' || e.key === 'W') keys.w = false;
+            if (e.key === 'a' || e.key === 'A') keys.a = false;
+            if (e.key === 's' || e.key === 'S') keys.s = false;
+            if (e.key === 'd' || e.key === 'D') keys.d = false;
+        });
 
         let canvas2D, ctx;
         let products = [];
@@ -528,6 +569,7 @@
             running = true;
             drone.state = 'flying';
             lastTime = performance.now();
+            if (missionTime === 0) missionTime = 0; // Iniciar contador si es nuevo
             setStatus('Escaneando...', 'bg-emerald-500', 'bg-emerald-400');
         }
 
@@ -539,6 +581,7 @@
 
         function resetMission() {
             running = false;
+            isManualMode = false;
             drone.state = 'idle';
             drone.battery = 100;
             drone.x = waypoints[0].x;
@@ -546,6 +589,7 @@
             drone.angle = 0;
             waypointIdx = 0;
             scannedCount = 0;
+            missionTime = 0;
             scanLasers = [];
             particles = [];
             products.forEach(p => { p.scanned = false; p.scanProgress = 0; });
@@ -630,11 +674,39 @@
                 if(dirLight2) dirLight2.intensity = 0.8;
                 if(scene && scene.fog) scene.fog.color.setHex(0x0f172a);
                 if(btn) {
-                    btn.innerHTML = '🌙 Modo Nocturno';
-                    btn.classList.replace('bg-amber-600', 'bg-slate-900');
-                }
+                btn.innerHTML = '🌙 Modo Nocturno';
+                btn.classList.replace('bg-amber-600', 'bg-slate-900');
             }
         }
+    }
+
+        function toggleManualMode() {
+            isManualMode = !isManualMode;
+            const btn = document.getElementById('btn-manual');
+            if (isManualMode) {
+                btn.innerHTML = '🕹 Modo: MANUAL (WASD)';
+                btn.classList.replace('bg-pink-600', 'bg-red-600');
+                if (!running) {
+                    running = true;
+                    drone.state = 'flying';
+                    lastTime = performance.now();
+                    if(missionTime === 0) missionTime = 0.1;
+                }
+                setStatus('Control Manual', 'bg-red-500', 'bg-red-400');
+            } else {
+                btn.innerHTML = '🕹 Modo: Autónomo';
+                btn.classList.replace('bg-red-600', 'bg-pink-600');
+                setStatus('Autónomo', 'bg-emerald-500', 'bg-emerald-400');
+                document.getElementById('btn-descender').classList.add('hidden');
+            }
+        }
+
+        // Nueva función para el botón de aterrizaje
+        window.landDrone = function() {
+            if (!isManualMode) return;
+            document.getElementById('btn-descender').classList.add('hidden');
+            finishMission("Aterrizaje Manual Exitoso");
+        };
 
         function gameLoop(time) {
             const dt = ((time - lastTime) / 1000) * simSpeedMult; 
@@ -655,6 +727,8 @@
 
         function updateLogic(dt) {
             drone.battery -= dt * 1.8; 
+            if (drone.state === 'flying') missionTime += dt; // Sumar tiempo de vuelo
+
             if (drone.battery <= 0) {
                 drone.battery = 0;
                 finishMission("Batería Agotada");
@@ -666,7 +740,33 @@
             scanLasers = scanLasers.filter(l => l.life > 0);
             scanLasers.forEach(l => l.life -= dt);
 
-            if (waypointIdx < waypoints.length) {
+            // Logica del Boton Descender (Base: x=50, y=60)
+            const distToBase = Math.hypot(drone.x - 50, drone.y - 60);
+            const btnDescender = document.getElementById('btn-descender');
+            if (isManualMode && running && distToBase < 45) {
+                if(btnDescender) btnDescender.classList.remove('hidden');
+            } else {
+                if(btnDescender) btnDescender.classList.add('hidden');
+            }
+
+            if (isManualMode) {
+                // Control Manual
+                let moved = false;
+                const manualSpeed = drone.speed * 1.5;
+                if (keys.w) { drone.y -= manualSpeed * dt; drone.angle = -Math.PI/2; moved = true; }
+                if (keys.s) { drone.y += manualSpeed * dt; drone.angle = Math.PI/2; moved = true; }
+                if (keys.a) { drone.x -= manualSpeed * dt; drone.angle = Math.PI; moved = true; }
+                if (keys.d) { drone.x += manualSpeed * dt; drone.angle = 0; moved = true; }
+                
+                // Límites del almacén
+                drone.x = Math.max(20, Math.min(drone.x, 880));
+                drone.y = Math.max(20, Math.min(drone.y, 480));
+                
+                if (moved && drone.state !== 'flying') drone.state = 'flying';
+                else if (!moved && drone.state === 'flying') drone.state = 'idle';
+
+            } else if (waypointIdx < waypoints.length) {
+                // Control Autónomo
                 const target = waypoints[waypointIdx];
                 const dx = target.x - drone.x;
                 const dy = target.y - drone.y;
@@ -689,10 +789,16 @@
             }
 
             let uiNeedsUpdate = false;
+            let aiTargetFound = false;
+
             products.forEach((p, idx) => {
                 if (p.scanned || p.isMissing) return;
                 
                 const dist = Math.hypot(drone.x - p.x, drone.y - p.y);
+                
+                // Si el dron está cerca y apuntando hacia el producto, mostrar HUD
+                if (dist < 150) aiTargetFound = true;
+
                 if (dist < 120) {
                     p.scanProgress += dt * 1.5;
                     if (Math.random() < 0.2) scanLasers.push({ x1: drone.x, y1: drone.y, x2: p.x, y2: p.y, life: 0.1 });
@@ -710,6 +816,10 @@
                 }
             });
 
+            // HUD FPV Visión Artificial
+            const aiBox = document.getElementById('ai-target-box');
+            if(aiBox) aiBox.style.display = (aiTargetFound && is3DView) ? 'block' : 'none';
+
             if (uiNeedsUpdate) {
                 updateUI();
                 renderInventoryList();
@@ -719,11 +829,12 @@
         function finishMission(reason) {
             running = false;
             drone.state = 'idle';
-            setStatus(reason, reason.includes('Completada') ? 'bg-blue-500' : 'bg-red-500', '');
+            setStatus(reason, reason.includes('Completada') || reason.includes('Exitoso') ? 'bg-blue-500' : 'bg-red-500', '');
             
             const shiftName = `Día ${timeState.day} - ${timeState.isMorning ? 'Mañana' : 'Tarde'}`;
             const scannedItems = products.filter(p => p.scanned).length;
             const missingItems = products.length - scannedItems;
+            const financialLoss = missingItems * 120; // 120 USD de pérdida promedio por caja
             
             const newReport = {
                 shift: shiftName,
@@ -731,6 +842,9 @@
                 scanned: scannedItems,
                 missing: missingItems,
                 batteryLeft: Math.round(drone.battery),
+                flightTime: Math.round(missionTime),
+                financialLoss: financialLoss,
+                wasManual: isManualMode,
                 raw: JSON.parse(JSON.stringify(products))
             };
             
@@ -1194,6 +1308,11 @@
             document.getElementById('rep-scanned').textContent = currHistory.scanned;
             document.getElementById('rep-pending').textContent = currHistory.missing;
             document.getElementById('rep-battery').textContent = currHistory.batteryLeft + '%';
+            document.getElementById('rep-time').textContent = (currHistory.flightTime || 0) + 's';
+            document.getElementById('rep-loss').textContent = '$' + (currHistory.financialLoss || 0).toLocaleString();
+            
+            let efficiency = currHistory.flightTime > 0 ? (currHistory.scanned / currHistory.flightTime).toFixed(1) : 0;
+            document.getElementById('rep-efficiency').textContent = `Velocidad: ${efficiency} items/seg`;
 
             const updateTrend = (elId, currVal, prevVal, isInverseGood = false) => {
                 const el = document.getElementById(elId);
@@ -1235,16 +1354,31 @@
 
             if (curr.missing === 0) {
                 html += `<p class="leading-relaxed"><strong class="text-white">Inventario perfecto.</strong> El 100% de los ${curr.total} items están en su ubicación asignada.</p>`;
+                html += `<p class="leading-relaxed text-emerald-400 mt-2">Riesgo financiero de discrepancias: $0.00 USD.</p>`;
             } else {
                 const missingPct = ((curr.missing / curr.total) * 100).toFixed(1);
-                html += `<p class="leading-relaxed mb-2"><strong class="text-[#fd625e]">Alerta:</strong> Se detectó una discrepancia del <strong class="text-white">${missingPct}%</strong> (${curr.missing} items).</p>`;
+                html += `<p class="leading-relaxed mb-2"><strong class="text-[#fd625e]">Alerta Operativa:</strong> Se detectó una discrepancia del <strong class="text-white">${missingPct}%</strong> (${curr.missing} items).</p>`;
                 
+                const lossStr = curr.financialLoss.toLocaleString();
+                html += `<p class="leading-relaxed text-rose-400 mb-2">⚠ Esto representa un riesgo financiero estimado de <strong>$${lossStr} USD</strong> en capital inmovilizado o extraviado.</p>`;
+
                 const missingItems = curr.raw.filter(p => !p.scanned);
                 const locations = {};
                 missingItems.forEach(i => locations[i.loc] = (locations[i.loc] || 0) + 1);
                 let worstLoc = Object.keys(locations).reduce((a, b) => locations[a] > locations[b] ? a : b);
-                html += `<p class="leading-relaxed">La zona crítica es <strong class="text-white">${worstLoc}</strong> con ${locations[worstLoc]} faltantes. Se sugiere auditoría cíclica en este rack.</p>`;
+                html += `<p class="leading-relaxed">La zona crítica es <strong class="text-white">${worstLoc}</strong> con ${locations[worstLoc]} faltantes. Se sugiere auditoría manual inmediata.</p>`;
             }
+
+            // Recomendaciones basadas en telemetría (Tiempo y Batería)
+            html += `<hr class="border-gray-700 my-3">`;
+            if (curr.wasManual) {
+                html += `<p class="text-xs text-gray-400">💡 <strong>Nota Operativa:</strong> El vuelo manual proporciona control pero reduce la eficiencia de escaneo. Se recomienda el modo autónomo para auditorías completas de almacén.</p>`;
+            } else if (curr.batteryLeft < 15) {
+                html += `<p class="text-xs text-yellow-400">⚡ <strong>Mantenimiento predictivo:</strong> La batería finalizó en niveles críticos. Se recomienda revisar los rotores del dron ya que están exigiendo sobreconsumo energético.</p>`;
+            } else {
+                html += `<p class="text-xs text-gray-400">⚡ <strong>Telemetría:</strong> Rendimiento energético estable y velocidad de escaneo óptima acorde al KPI del almacén.</p>`;
+            }
+
             insightBox.innerHTML = html;
         }
 
