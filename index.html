@@ -99,6 +99,9 @@
                 <button onclick="toggleNightMode()" id="btn-night" class="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-600 rounded-lg font-semibold transition flex items-center gap-2 hidden lg:flex">
                     🌙 Modo Nocturno
                 </button>
+                <button onclick="exportToPowerBI()" class="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-semibold transition shadow-lg shadow-emerald-500/30 flex items-center gap-2">
+                    📊 Exportar CSV
+                </button>
             </div>
             <div class="flex items-center gap-4">
                 <div class="flex items-center gap-2 text-sm text-slate-300">
@@ -298,7 +301,7 @@
 
         window.saveReportToCloud = async (reportData) => {
             // Guardar siempre en localStorage primero para disponibilidad inmediata en la UI
-            const local = JSON.parse(localStorage.getItem('drone_reports') || '[]');
+            let local = JSON.parse(localStorage.getItem('drone_reports') || '[]');
             local.push(reportData);
             localStorage.setItem('drone_reports', JSON.stringify(local));
 
@@ -319,15 +322,12 @@
             const tbody = document.getElementById('historyTableBody');
             if(!tbody) return;
 
-            // Primero cargamos de localStorage para respuesta instantánea
-            const local = JSON.parse(localStorage.getItem('drone_reports') || '[]');
-            
             if(!db) {
                 loadFlightHistoryFromLocal();
                 return;
             }
 
-            db.collection("vuelos_drone").orderBy("timestamp", "desc").limit(6).get()
+            db.collection("vuelos_drone").get()
             .then(snapshot => {
                 tbody.innerHTML = '';
                 let items = [];
@@ -335,13 +335,12 @@
                     items.push(doc.data());
                 });
                 
-                // Si la nube está vacía pero hay datos locales, usamos locales
                 if(items.length === 0) {
                     loadFlightHistoryFromLocal();
                     return;
                 }
 
-                items.forEach(data => {
+                items.slice(-6).reverse().forEach(data => {
                     appendHistoryRow(tbody, data);
                 });
             }).catch(() => {
@@ -364,7 +363,6 @@
         }
 
         function appendHistoryRow(tbody, data) {
-            // Evitar duplicados visuales basados en turno/fecha
             tbody.innerHTML += `
                 <tr class="border-b border-slate-800 hover:bg-slate-800/50 cursor-pointer" onclick='loadReportSnapshot(${JSON.stringify(data)})'>
                     <td class="p-2 font-mono text-sky-400">${data.shift || 'Turno Reciente'}</td>
@@ -417,26 +415,13 @@
         let ambientLight, dirLight, dirLight2;
         let isNightMode = false;
 
-        const mockCSV = `SKU,Producto,Cantidad,Ubicacion
-R1-001,Motor DC 12V,15,Rack A1
-R1-002,Placa Arduino,45,Rack A1
-R1-003,Sensores Ultrasonicos,8,Rack A1
-R1-004,Cables Jumper,30,Rack A1
-R2-001,Engranajes (Set),22,Rack B1
-R2-002,Rodamientos,120,Rack B1
-R2-003,Baterías LiPo,80,Rack B1
-R3-001,Chasis Aluminio,12,Rack C1
-R3-002,Hélices repuesto,28,Rack C1
-R3-003,Cinta Aislante,60,Rack C1
-R4-001,Tornillos M3,200,Rack D1
-R4-002,Tuercas M3,200,Rack D1`;
-
         window.addEventListener('DOMContentLoaded', () => {
             canvas2D = document.getElementById("warehouse-2d");
             if(canvas2D) {
                 ctx = canvas2D.getContext("2d");
-                canvas2D.width = canvas2D.parentElement.clientWidth;
-                canvas2D.height = canvas2D.parentElement.clientHeight;
+                // Fijar resolución interna para mantener proporciones del plano
+                canvas2D.width = 900;
+                canvas2D.height = 500;
             }
             
             init3D();
@@ -453,64 +438,68 @@ R4-002,Tuercas M3,200,Rack D1`;
         });
 
         window.addEventListener('resize', () => {
-            if(canvas2D && canvas2D.parentElement) {
-                canvas2D.width = canvas2D.parentElement.clientWidth;
-                canvas2D.height = canvas2D.parentElement.clientHeight;
-            }
-            if (renderer) {
-                camera.aspect = canvas2D.width / canvas2D.height;
+            if (renderer && canvas2D && canvas2D.parentElement) {
+                camera.aspect = canvas2D.parentElement.clientWidth / canvas2D.parentElement.clientHeight;
                 camera.updateProjectionMatrix();
-                renderer.setSize(canvas2D.width, canvas2D.height);
+                renderer.setSize(canvas2D.parentElement.clientWidth, canvas2D.parentElement.clientHeight);
             }
             draw2DWarehouse();
         });
 
         function loadData() {
-            const lines = mockCSV.trim().split('\n');
-            const dataLines = lines.slice(1);
+            products = [];
+            let skuCounter = 1000;
             
-            const cols = 4;
-            const startX = 150;
-            const startY = 120;
-            const spaceX = (canvas2D ? canvas2D.width - 200 : 800) / (cols - 1);
-            const spaceY = 130;
-            
-            products = dataLines.map((line, index) => {
-                const [sku, nombre, cantidad, ubicacion] = line.split(',');
-                const row = Math.floor(index / cols);
-                const col = index % cols;
-                
-                return {
-                    id: sku, name: nombre, qty: cantidad, loc: ubicacion,
-                    x: startX + col * spaceX,
-                    y: startY + row * spaceY,
-                    scanned: false, scanProgress: 0,
-                    isMissing: Math.random() < 0.05
-                };
+            // Generar layout basado en el plano arquitectónico (Zonas verticales)
+            const rackConfig = [
+                { name: 'Drive-In (C)', startX: 100, cols: 1, spaceX: 0, rows: 6, spaceY: 55 },
+                { name: 'Rotación Media (C)', startX: 250, cols: 4, spaceX: 80, rows: 7, spaceY: 45 },
+                { name: 'Picking (D)', startX: 650, cols: 2, spaceX: 80, rows: 7, spaceY: 45 }
+            ];
+
+            rackConfig.forEach(zone => {
+                for(let c=0; c<zone.cols; c++) {
+                    for(let r=0; r<zone.rows; r++) {
+                        products.push({
+                            id: `SKU-${skuCounter++}`, 
+                            name: `Caja ${zone.name}`, 
+                            qty: Math.floor(Math.random() * 50) + 10,
+                            loc: `${zone.name.split(' ')[0]}-P${c+1}-N${r+1}`,
+                            x: zone.startX + c * zone.spaceX,
+                            y: 150 + r * zone.spaceY,
+                            scanned: false, scanProgress: 0,
+                            isMissing: Math.random() < 0.05
+                        });
+                    }
+                }
             });
 
-            generateWaypoints(Math.ceil(products.length / cols));
+            generateWaypoints();
             create3DRacks();
             updateUI();
             renderInventoryList();
             draw2DWarehouse();
         }
 
-        function generateWaypoints(rows) {
-            waypoints = [{x: 50, y: 60}];
-            let currentY = 60;
-            const rightEdge = canvas2D ? canvas2D.width - 50 : 900;
+        function generateWaypoints() {
+            waypoints = [{x: 50, y: 60}]; // Base de recarga
             
-            for (let i = 0; i <= rows; i++) {
-                if (i % 2 === 0) {
-                    waypoints.push({x: rightEdge, y: currentY});
-                    if (i < rows) { currentY += 130; waypoints.push({x: rightEdge, y: currentY}); }
+            // Ruta en Zig-Zag vertical por los pasillos simulando el plano
+            const aisles = [100, 210, 290, 370, 450, 610, 690, 800];
+            let goDown = true;
+            
+            aisles.forEach(x => {
+                if (goDown) {
+                    waypoints.push({x: x, y: 100});
+                    waypoints.push({x: x, y: 450});
                 } else {
-                    waypoints.push({x: 50, y: currentY});
-                    if (i < rows) { currentY += 130; waypoints.push({x: 50, y: currentY}); }
+                    waypoints.push({x: x, y: 450});
+                    waypoints.push({x: x, y: 100});
                 }
-            }
-            waypoints.push({x: 50, y: 60});
+                goDown = !goDown;
+            });
+            
+            waypoints.push({x: 50, y: 60}); // Retorno a base
         }
 
         function advanceTime() {
@@ -756,10 +745,20 @@ R4-002,Tuercas M3,200,Rack D1`;
             if(!ctx || !canvas2D) return;
             ctx.clearRect(0, 0, canvas2D.width, canvas2D.height);
 
-            ctx.fillStyle = "rgba(255,255,255,0.02)";
-            for(let y = 60; y < canvas2D.height; y += 130) {
-                ctx.fillRect(40, y - 25, canvas2D.width - 80, 50);
+            // Dibujar zonas del plano (Staging Area, Loading Docks)
+            ctx.fillStyle = "rgba(59, 130, 246, 0.05)";
+            ctx.fillRect(0, 0, canvas2D.width, 90);
+            ctx.fillStyle = "#3b82f6"; ctx.font = "bold 12px Inter"; ctx.textAlign = "center";
+            ctx.fillText("ZONA DE CARGA Y DESCARGA / STAGING AREA", canvas2D.width / 2, 30);
+            
+            // Muelles (Puertas)
+            for(let i=0; i<7; i++) {
+                ctx.strokeStyle = "#64748b"; ctx.strokeRect(canvas2D.width/2 - 200 + i*60, 0, 40, 10);
             }
+
+            // Dibujar Fondo de Racks
+            ctx.fillStyle = "rgba(255,255,255,0.02)";
+            ctx.fillRect(80, 120, canvas2D.width - 100, 360);
 
             if (waypoints.length > 0) {
                 ctx.beginPath();
@@ -776,22 +775,25 @@ R4-002,Tuercas M3,200,Rack D1`;
             }
 
             products.forEach(p => {
-                ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(p.x - 45, p.y - 30 + 8, 90, 60);
-                ctx.fillStyle = "#1e293b"; ctx.fillRect(p.x - 45, p.y - 30, 90, 60);
-                ctx.strokeStyle = "#334155"; ctx.lineWidth = 2; ctx.strokeRect(p.x - 45, p.y - 30, 90, 60);
+                // Racks verticales vs horizontales adaptados al plano
+                const isDriveIn = p.x < 200;
+                const rw = isDriveIn ? 60 : 30;
+                const rh = isDriveIn ? 30 : 40;
+                
+                ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(p.x - rw/2, p.y - rh/2 + 5, rw, rh);
+                ctx.fillStyle = "#1e293b"; ctx.fillRect(p.x - rw/2, p.y - rh/2, rw, rh);
+                ctx.strokeStyle = "#334155"; ctx.lineWidth = 1; ctx.strokeRect(p.x - rw/2, p.y - rh/2, rw, rh);
 
-                if (p.scanProgress > 0 && !p.scanned) { ctx.shadowBlur = 15; ctx.shadowColor = "#3b82f6"; }
+                if (p.scanProgress > 0 && !p.scanned) { ctx.shadowBlur = 10; ctx.shadowColor = "#3b82f6"; }
                 
                 ctx.fillStyle = p.scanned ? "#10b981" : (p.scanProgress > 0 ? "#3b82f6" : "#64748b");
                 if (p.isMissing && !running && drone.state === 'idle' && waypointIdx > 0) ctx.fillStyle = "#ef4444"; 
                 
-                ctx.fillRect(p.x - 20, p.y - 15, 40, 30);
+                ctx.fillRect(p.x - 10, p.y - 10, 20, 20);
                 ctx.shadowBlur = 0; 
 
-                ctx.fillStyle = "#f8fafc"; ctx.font = "bold 11px Inter"; ctx.textAlign = "center";
-                ctx.fillText(p.loc, p.x, p.y - 18);
-                ctx.fillStyle = p.scanned ? "#064e3b" : "#94a3b8"; ctx.font = "10px Inter";
-                ctx.fillText(p.id, p.x, p.y + 2);
+                ctx.fillStyle = "#f8fafc"; ctx.font = "bold 8px Inter"; ctx.textAlign = "center";
+                ctx.fillText(p.id.split('-')[1], p.x, p.y + 3);
             });
 
             scanLasers.forEach(l => {
@@ -814,6 +816,44 @@ R4-002,Tuercas M3,200,Rack D1`;
             ctx.fillStyle = "#2563eb"; ctx.beginPath(); ctx.arc(0, 0, 8, 0, Math.PI*2); ctx.fill();
             ctx.fillStyle = running ? "#10b981" : "#ef4444"; ctx.beginPath(); ctx.arc(8, 0, 2, 0, Math.PI*2); ctx.fill();
             ctx.restore();
+        }
+
+        function exportToPowerBI() {
+            if (scanHistory.length === 0) {
+                alert("No hay datos para exportar. Por favor completa al menos un vuelo de escaneo primero.");
+                return;
+            }
+            
+            const latestReport = scanHistory[scanHistory.length - 1];
+            const timestamp = new Date().toISOString();
+            
+            // Estructura plana ideal para el modelo de datos de Power BI
+            let csvContent = "Fecha_Escaneo,Turno_Asignado,SKU,Descripcion_Producto,Ubicacion_Fisica,Cantidad_Teorica,Estado_Validacion,Bateria_Dron_Final\n";
+            
+            latestReport.raw.forEach(p => {
+                const estado = p.scanned ? "Confirmado_OK" : "Discrepancia_Faltante";
+                const row = [
+                    timestamp, 
+                    latestReport.shift, 
+                    p.id, 
+                    p.name, 
+                    p.loc, 
+                    p.qty || 1, 
+                    estado, 
+                    latestReport.batteryLeft + "%"
+                ].join(",");
+                csvContent += row + "\n";
+            });
+            
+            // Crear Blob y forzar descarga
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.setAttribute("href", url);
+            link.setAttribute("download", `Drone_Reporte_PowerBI_${latestReport.shift.replace(/\s+/g, '_')}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
         }
 
         function createParticles(x, y) {
@@ -932,33 +972,45 @@ R4-002,Tuercas M3,200,Rack D1`;
             rackMeshes = [];
 
             products.forEach((p, idx) => {
-                const rackGroup = createDetailedRack();
+                const isDriveIn = p.x < 200;
+                const rackGroup = createDetailedRack(isDriveIn);
                 rackGroup.position.set(mapX(p.x), 0, mapZ(p.y));
+                
+                // Rotar los racks que no son Drive-in para que sean pasillos verticales
+                if (!isDriveIn) {
+                    rackGroup.rotation.y = Math.PI / 2;
+                }
+                
                 rackGroup.userData.productIndex = idx;
                 scene.add(rackGroup);
                 rackMeshes.push(rackGroup);
             });
         }
 
-        function createDetailedRack() {
+        function createDetailedRack(isDriveIn = false) {
             const group = new THREE.Group();
             const postMat = new THREE.MeshStandardMaterial({color: 0x475569, metalness: 0.8, roughness: 0.4});
+            
+            // Ajustar proporciones visuales del rack en 3D
+            const width = isDriveIn ? 40 : 20;
+            const depth = isDriveIn ? 30 : 25;
+            
             const postGeo = new THREE.BoxGeometry(2, 50, 2);
-            [[-18,-13], [18,-13], [-18,13], [18,13]].forEach(pos => {
+            [[-width/2 + 2, -depth/2 + 2], [width/2 - 2, -depth/2 + 2], [-width/2 + 2, depth/2 - 2], [width/2 - 2, depth/2 - 2]].forEach(pos => {
                 const post = new THREE.Mesh(postGeo, postMat);
                 post.position.set(pos[0], 25, pos[1]);
                 group.add(post);
             });
 
             const shelfMat = new THREE.MeshStandardMaterial({color: 0x334155, metalness: 0.5});
-            const shelfGeo = new THREE.BoxGeometry(40, 1, 30);
+            const shelfGeo = new THREE.BoxGeometry(width, 1, depth);
             [10, 25, 40].forEach(y => {
                 const shelf = new THREE.Mesh(shelfGeo, shelfMat);
                 shelf.position.y = y;
                 group.add(shelf);
             });
 
-            const boxGeo = new THREE.BoxGeometry(14, 10, 18);
+            const boxGeo = new THREE.BoxGeometry(14, 10, 14);
             const boxMat = new THREE.MeshStandardMaterial({color: 0x64748b, roughness: 0.9});
             const targetBox = new THREE.Mesh(boxGeo, boxMat);
             targetBox.position.set(0, 30.5, 0);
