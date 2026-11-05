@@ -337,7 +337,10 @@
             unsubscribeRealtime = db.collection("vuelos_drone").onSnapshot(snapshot => {
                 renderTableFromSnapshot(snapshot);
             }, error => {
-                console.error("Error al escuchar Firestore:", error);
+                console.error("Error al escuchar Firestore (Socket bloqueado):", error);
+                // FALLBACK: Si el navegador bloquea el socket en tiempo real (común en modo local),
+                // activamos un auto-refresco invisible cada 5 segundos para que aparezcan solos.
+                setInterval(window.forceSync, 5000);
                 loadFlightHistoryFromLocal();
             });
         }
@@ -398,8 +401,14 @@
                         ...reportData,
                         timestampServer: firebase.firestore.FieldValue.serverTimestamp()
                     });
+                    
+                    // FORZAR ACTUALIZACIÓN: Garantiza que el nuevo reporte aparezca "solo" inmediatamente 
+                    // después de guardarse, incluso si el socket en tiempo real está dormido.
+                    setTimeout(forceSync, 400); 
+
                 } catch(err) {
                     console.error("Error sincronizando con nube:", err);
+                    loadFlightHistoryFromLocal();
                 }
             } else {
                 loadFlightHistoryFromLocal(); // Solo actualizamos local si no hay DB
