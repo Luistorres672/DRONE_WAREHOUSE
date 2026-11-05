@@ -172,7 +172,7 @@
             <div class="glass-panel p-4 rounded-xl flex flex-col">
                 <div class="flex justify-between items-center mb-3">
                     <h3 class="font-bold text-white text-sm flex items-center gap-2">
-                        📊 Historial de Escaneos Anteriores 
+                        📊 Historial de Escaneos (Sincronización en Tiempo Real)
                     </h3>
                     <span class="text-xs text-slate-400">Selecciona un registro para abrir su reporte</span>
                 </div>
@@ -245,7 +245,6 @@
                         <div class="text-3xl font-light text-white" id="rep-battery">0%</div>
                         <div class="text-xs mt-2 font-medium" id="rep-battery-trend">-</div>
                     </div>
-                    <!-- Nuevas tarjetas analíticas -->
                     <div class="power-bi-card" style="border-left-color: #8A2BE2;">
                         <div class="text-gray-400 text-xs font-semibold uppercase mb-1">Tiempo de Vuelo</div>
                         <div class="text-3xl font-light text-white" id="rep-time">0s</div>
@@ -300,6 +299,8 @@
         };
 
         let db = null;
+        let unsubscribeRealtime = null;
+
         try {
             firebase.initializeApp(firebaseConfig);
             db = firebase.firestore();
@@ -309,7 +310,7 @@
                     cloudEl.innerText = "Conectado";
                     cloudEl.className = "text-base text-green-400 font-bold";
                 }
-                loadFlightHistory();
+                listenToCloudHistory(); // Iniciar Escucha en Tiempo Real
             }).catch(err => {
                 console.warn("Auth warning:", err);
                 const cloudEl = document.getElementById('cloudStatus');
@@ -321,12 +322,46 @@
             loadFlightHistoryFromLocal();
         }
 
+        // Función para escuchar la base de datos en TIEMPO REAL
+        function listenToCloudHistory() {
+            const tbody = document.getElementById('historyTableBody');
+            if(!tbody || !db) return;
+
+            // .onSnapshot recibe actualizaciones instantáneas de creaciones, modificaciones o borrados
+            unsubscribeRealtime = db.collection("vuelos_drone").onSnapshot(snapshot => {
+                let items = [];
+                snapshot.forEach(doc => {
+                    let data = doc.data();
+                    data._id = doc.id; // Guardamos el ID interno
+                    items.push(data);
+                });
+                
+                if(items.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="4" class="p-3 text-center text-slate-500">No hay registros en la nube (se borraron o no existen).</td></tr>`;
+                    return;
+                }
+
+                // Ordenamos por timestamp (cadena de fecha) para mostrar los últimos
+                items.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+                tbody.innerHTML = '';
+                // Mostrar solo los últimos 6
+                items.slice(-6).reverse().forEach(data => {
+                    appendHistoryRow(tbody, data);
+                });
+            }, error => {
+                console.error("Error al escuchar Firestore:", error);
+                loadFlightHistoryFromLocal();
+            });
+        }
+
         window.saveReportToCloud = async (reportData) => {
-            // Guardar siempre en localStorage primero para disponibilidad inmediata en la UI
+            // Backup Local
             let local = JSON.parse(localStorage.getItem('drone_reports') || '[]');
             local.push(reportData);
             localStorage.setItem('drone_reports', JSON.stringify(local));
 
+            // Guardar en la nube (la tabla se actualizará automáticamente gracias a onSnapshot)
             if (db) {
                 try {
                     await db.collection("vuelos_drone").add({
@@ -336,39 +371,10 @@
                 } catch(err) {
                     console.error("Error sincronizando con nube:", err);
                 }
+            } else {
+                loadFlightHistoryFromLocal(); // Solo actualizamos local si no hay DB
             }
-            loadFlightHistory();
         };
-
-        function loadFlightHistory() {
-            const tbody = document.getElementById('historyTableBody');
-            if(!tbody) return;
-
-            if(!db) {
-                loadFlightHistoryFromLocal();
-                return;
-            }
-
-            db.collection("vuelos_drone").get()
-            .then(snapshot => {
-                tbody.innerHTML = '';
-                let items = [];
-                snapshot.forEach(doc => {
-                    items.push(doc.data());
-                });
-                
-                if(items.length === 0) {
-                    loadFlightHistoryFromLocal();
-                    return;
-                }
-
-                items.slice(-6).reverse().forEach(data => {
-                    appendHistoryRow(tbody, data);
-                });
-            }).catch(() => {
-                loadFlightHistoryFromLocal();
-            });
-        }
 
         function loadFlightHistoryFromLocal() {
             const tbody = document.getElementById('historyTableBody');
@@ -407,7 +413,7 @@
         let simSpeedMult = 2;
         let is3DView = false;
         let isManualMode = false;
-        let missionTime = 0; // Nueva variable para medir el tiempo real
+        let missionTime = 0; 
         let keys = { w: false, a: false, s: false, d: false };
 
         window.addEventListener('keydown', (e) => {
@@ -460,7 +466,6 @@
             canvas2D = document.getElementById("warehouse-2d");
             if(canvas2D) {
                 ctx = canvas2D.getContext("2d");
-                // Fijar resolución interna para mantener proporciones del plano
                 canvas2D.width = 900;
                 canvas2D.height = 500;
             }
@@ -491,7 +496,6 @@
             products = [];
             let skuCounter = 1000;
             
-            // Generar layout basado en el plano arquitectónico (Zonas verticales)
             const rackConfig = [
                 { name: 'Drive-In (C)', startX: 100, cols: 1, spaceX: 0, rows: 6, spaceY: 55 },
                 { name: 'Rotación Media (C)', startX: 250, cols: 4, spaceX: 80, rows: 7, spaceY: 45 },
@@ -523,9 +527,8 @@
         }
 
         function generateWaypoints() {
-            waypoints = [{x: 50, y: 60}]; // Base de recarga
+            waypoints = [{x: 50, y: 60}]; 
             
-            // Ruta en Zig-Zag vertical por los pasillos simulando el plano
             const aisles = [100, 210, 290, 370, 450, 610, 690, 800];
             let goDown = true;
             
@@ -540,7 +543,7 @@
                 goDown = !goDown;
             });
             
-            waypoints.push({x: 50, y: 60}); // Retorno a base
+            waypoints.push({x: 50, y: 60});
         }
 
         function advanceTime() {
@@ -569,7 +572,7 @@
             running = true;
             drone.state = 'flying';
             lastTime = performance.now();
-            if (missionTime === 0) missionTime = 0; // Iniciar contador si es nuevo
+            if (missionTime === 0) missionTime = 0;
             setStatus('Escaneando...', 'bg-emerald-500', 'bg-emerald-400');
         }
 
@@ -603,6 +606,13 @@
             renderInventoryList();
             draw2DWarehouse();
             setStatus('En Base', 'bg-slate-500', 'bg-slate-400');
+            
+            const btnManual = document.getElementById('btn-manual');
+            if(btnManual) {
+                btnManual.innerHTML = '🕹 Modo: Autónomo';
+                btnManual.classList.replace('bg-red-600', 'bg-pink-600');
+            }
+            document.getElementById('btn-descender')?.classList.add('hidden');
         }
 
         function setStatus(text, dotClass, pingClass) {
@@ -697,14 +707,13 @@
                 btn.innerHTML = '🕹 Modo: Autónomo';
                 btn.classList.replace('bg-red-600', 'bg-pink-600');
                 setStatus('Autónomo', 'bg-emerald-500', 'bg-emerald-400');
-                document.getElementById('btn-descender').classList.add('hidden');
+                document.getElementById('btn-descender')?.classList.add('hidden');
             }
         }
 
-        // Nueva función para el botón de aterrizaje
         window.landDrone = function() {
             if (!isManualMode) return;
-            document.getElementById('btn-descender').classList.add('hidden');
+            document.getElementById('btn-descender')?.classList.add('hidden');
             finishMission("Aterrizaje Manual Exitoso");
         };
 
@@ -727,7 +736,7 @@
 
         function updateLogic(dt) {
             drone.battery -= dt * 1.8; 
-            if (drone.state === 'flying') missionTime += dt; // Sumar tiempo de vuelo
+            if (drone.state === 'flying') missionTime += dt; 
 
             if (drone.battery <= 0) {
                 drone.battery = 0;
@@ -740,7 +749,6 @@
             scanLasers = scanLasers.filter(l => l.life > 0);
             scanLasers.forEach(l => l.life -= dt);
 
-            // Logica del Boton Descender (Base: x=50, y=60)
             const distToBase = Math.hypot(drone.x - 50, drone.y - 60);
             const btnDescender = document.getElementById('btn-descender');
             if (isManualMode && running && distToBase < 45) {
@@ -750,7 +758,6 @@
             }
 
             if (isManualMode) {
-                // Control Manual
                 let moved = false;
                 const manualSpeed = drone.speed * 1.5;
                 if (keys.w) { drone.y -= manualSpeed * dt; drone.angle = -Math.PI/2; moved = true; }
@@ -758,7 +765,6 @@
                 if (keys.a) { drone.x -= manualSpeed * dt; drone.angle = Math.PI; moved = true; }
                 if (keys.d) { drone.x += manualSpeed * dt; drone.angle = 0; moved = true; }
                 
-                // Límites del almacén
                 drone.x = Math.max(20, Math.min(drone.x, 880));
                 drone.y = Math.max(20, Math.min(drone.y, 480));
                 
@@ -766,7 +772,6 @@
                 else if (!moved && drone.state === 'flying') drone.state = 'idle';
 
             } else if (waypointIdx < waypoints.length) {
-                // Control Autónomo
                 const target = waypoints[waypointIdx];
                 const dx = target.x - drone.x;
                 const dy = target.y - drone.y;
@@ -795,8 +800,6 @@
                 if (p.scanned || p.isMissing) return;
                 
                 const dist = Math.hypot(drone.x - p.x, drone.y - p.y);
-                
-                // Si el dron está cerca y apuntando hacia el producto, mostrar HUD
                 if (dist < 150) aiTargetFound = true;
 
                 if (dist < 120) {
@@ -816,7 +819,6 @@
                 }
             });
 
-            // HUD FPV Visión Artificial
             const aiBox = document.getElementById('ai-target-box');
             if(aiBox) aiBox.style.display = (aiTargetFound && is3DView) ? 'block' : 'none';
 
@@ -834,10 +836,11 @@
             const shiftName = `Día ${timeState.day} - ${timeState.isMorning ? 'Mañana' : 'Tarde'}`;
             const scannedItems = products.filter(p => p.scanned).length;
             const missingItems = products.length - scannedItems;
-            const financialLoss = missingItems * 120; // 120 USD de pérdida promedio por caja
+            const financialLoss = missingItems * 120; 
             
             const newReport = {
                 shift: shiftName,
+                timestamp: new Date().toISOString(), // Añadimos timestamp local explícito
                 total: products.length,
                 scanned: scannedItems,
                 missing: missingItems,
@@ -859,18 +862,15 @@
             if(!ctx || !canvas2D) return;
             ctx.clearRect(0, 0, canvas2D.width, canvas2D.height);
 
-            // Dibujar zonas del plano (Staging Area, Loading Docks)
             ctx.fillStyle = "rgba(59, 130, 246, 0.05)";
             ctx.fillRect(0, 0, canvas2D.width, 90);
             ctx.fillStyle = "#3b82f6"; ctx.font = "bold 12px Inter"; ctx.textAlign = "center";
             ctx.fillText("ZONA DE CARGA Y DESCARGA / STAGING AREA", canvas2D.width / 2, 30);
             
-            // Muelles (Puertas)
             for(let i=0; i<7; i++) {
                 ctx.strokeStyle = "#64748b"; ctx.strokeRect(canvas2D.width/2 - 200 + i*60, 0, 40, 10);
             }
 
-            // Dibujar Fondo de Racks
             ctx.fillStyle = "rgba(255,255,255,0.02)";
             ctx.fillRect(80, 120, canvas2D.width - 100, 360);
 
@@ -889,7 +889,6 @@
             }
 
             products.forEach(p => {
-                // Racks verticales vs horizontales adaptados al plano
                 const isDriveIn = p.x < 200;
                 const rw = isDriveIn ? 60 : 30;
                 const rh = isDriveIn ? 30 : 40;
@@ -939,15 +938,14 @@
             }
             
             const latestReport = scanHistory[scanHistory.length - 1];
-            const timestamp = new Date().toISOString();
+            const timestampStr = latestReport.timestamp || new Date().toISOString();
             
-            // Estructura plana ideal para el modelo de datos de Power BI
             let csvContent = "Fecha_Escaneo,Turno_Asignado,SKU,Descripcion_Producto,Ubicacion_Fisica,Cantidad_Teorica,Estado_Validacion,Bateria_Dron_Final\n";
             
             latestReport.raw.forEach(p => {
                 const estado = p.scanned ? "Confirmado_OK" : "Discrepancia_Faltante";
                 const row = [
-                    timestamp, 
+                    timestampStr, 
                     latestReport.shift, 
                     p.id, 
                     p.name, 
@@ -959,7 +957,6 @@
                 csvContent += row + "\n";
             });
             
-            // Crear Blob y forzar descarga
             const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
             const url = URL.createObjectURL(blob);
             const link = document.createElement("a");
@@ -1090,7 +1087,6 @@
                 const rackGroup = createDetailedRack(isDriveIn);
                 rackGroup.position.set(mapX(p.x), 0, mapZ(p.y));
                 
-                // Rotar los racks que no son Drive-in para que sean pasillos verticales
                 if (!isDriveIn) {
                     rackGroup.rotation.y = Math.PI / 2;
                 }
@@ -1105,7 +1101,6 @@
             const group = new THREE.Group();
             const postMat = new THREE.MeshStandardMaterial({color: 0x475569, metalness: 0.8, roughness: 0.4});
             
-            // Ajustar proporciones visuales del rack en 3D
             const width = isDriveIn ? 40 : 20;
             const depth = isDriveIn ? 30 : 25;
             
@@ -1360,7 +1355,7 @@
                 html += `<p class="leading-relaxed mb-2"><strong class="text-[#fd625e]">Alerta Operativa:</strong> Se detectó una discrepancia del <strong class="text-white">${missingPct}%</strong> (${curr.missing} items).</p>`;
                 
                 const lossStr = curr.financialLoss.toLocaleString();
-                html += `<p class="leading-relaxed text-rose-400 mb-2">⚠ Esto representa un riesgo financiero estimado de <strong>$${lossStr} USD</strong> en capital inmovilizado o extraviado.</p>`;
+                html += `<p class="leading-relaxed text-rose-400 mb-2">⚠ Riesgo financiero estimado de <strong>$${lossStr} USD</strong> en capital inmovilizado o extraviado.</p>`;
 
                 const missingItems = curr.raw.filter(p => !p.scanned);
                 const locations = {};
@@ -1369,14 +1364,13 @@
                 html += `<p class="leading-relaxed">La zona crítica es <strong class="text-white">${worstLoc}</strong> con ${locations[worstLoc]} faltantes. Se sugiere auditoría manual inmediata.</p>`;
             }
 
-            // Recomendaciones basadas en telemetría (Tiempo y Batería)
             html += `<hr class="border-gray-700 my-3">`;
             if (curr.wasManual) {
                 html += `<p class="text-xs text-gray-400">💡 <strong>Nota Operativa:</strong> El vuelo manual proporciona control pero reduce la eficiencia de escaneo. Se recomienda el modo autónomo para auditorías completas de almacén.</p>`;
             } else if (curr.batteryLeft < 15) {
-                html += `<p class="text-xs text-yellow-400">⚡ <strong>Mantenimiento predictivo:</strong> La batería finalizó en niveles críticos. Se recomienda revisar los rotores del dron ya que están exigiendo sobreconsumo energético.</p>`;
+                html += `<p class="text-xs text-yellow-400">⚡ <strong>Mantenimiento predictivo:</strong> La batería finalizó en niveles críticos. Revisar rotores por sobreconsumo energético.</p>`;
             } else {
-                html += `<p class="text-xs text-gray-400">⚡ <strong>Telemetría:</strong> Rendimiento energético estable y velocidad de escaneo óptima acorde al KPI del almacén.</p>`;
+                html += `<p class="text-xs text-gray-400">⚡ <strong>Telemetría:</strong> Rendimiento energético estable y velocidad de escaneo óptima acorde al KPI.</p>`;
             }
 
             insightBox.innerHTML = html;
