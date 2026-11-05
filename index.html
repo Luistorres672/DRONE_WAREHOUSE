@@ -102,6 +102,9 @@
                 <button onclick="toggleNightMode()" id="btn-night" class="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-600 rounded-lg font-semibold transition flex items-center gap-2 hidden lg:flex">
                     🌙 Modo Nocturno
                 </button>
+                <button onclick="toggleAudio()" id="btn-audio" class="px-5 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-semibold transition shadow-lg shadow-slate-900/30 flex items-center gap-2">
+                    🔇 Sonido: Off
+                </button>
                 <button onclick="exportToPowerBI()" class="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-semibold transition shadow-lg shadow-emerald-500/30 flex items-center gap-2">
                     📊 Exportar CSV 
                 </button>
@@ -174,7 +177,10 @@
                     <h3 class="font-bold text-white text-sm flex items-center gap-2">
                         📊 Historial de Escaneos (Sincronización en Tiempo Real)
                     </h3>
-                    <span class="text-xs text-slate-400">Selecciona un registro para abrir su reporte</span>
+                    <div class="flex items-center gap-3">
+                        <span class="text-xs text-slate-400 hidden md:block">Selecciona un registro para abrir su reporte</span>
+                        <button onclick="forceSync()" class="bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded text-white text-xs font-semibold shadow" title="Forzar Sincronización Manual">🔄 Refrescar</button>
+                    </div>
                 </div>
                 <div class="overflow-x-auto max-h-40">
                     <table class="w-full text-left text-xs text-slate-300">
@@ -329,31 +335,55 @@
 
             // .onSnapshot recibe actualizaciones instantáneas de creaciones, modificaciones o borrados
             unsubscribeRealtime = db.collection("vuelos_drone").onSnapshot(snapshot => {
-                let items = [];
-                snapshot.forEach(doc => {
-                    let data = doc.data();
-                    data._id = doc.id; // Guardamos el ID interno
-                    items.push(data);
-                });
-                
-                if(items.length === 0) {
-                    tbody.innerHTML = `<tr><td colspan="4" class="p-3 text-center text-slate-500">No hay registros en la nube (se borraron o no existen).</td></tr>`;
-                    return;
-                }
-
-                // Ordenamos por timestamp (cadena de fecha) para mostrar los últimos
-                items.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-
-                tbody.innerHTML = '';
-                // Mostrar solo los últimos 6
-                items.slice(-6).reverse().forEach(data => {
-                    appendHistoryRow(tbody, data);
-                });
+                renderTableFromSnapshot(snapshot);
             }, error => {
                 console.error("Error al escuchar Firestore:", error);
                 loadFlightHistoryFromLocal();
             });
         }
+
+        // Nueva función robusta para pintar la tabla
+        function renderTableFromSnapshot(snapshot) {
+            const tbody = document.getElementById('historyTableBody');
+            let items = [];
+            snapshot.forEach(doc => {
+                let data = doc.data();
+                data._id = doc.id; // Guardamos el ID de Firebase para poder borrarlo
+                items.push(data);
+            });
+            
+            if(items.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="4" class="p-3 text-center text-slate-500">No hay registros en la nube (se borraron o no existen).</td></tr>`;
+                return;
+            }
+
+            // Ordenamiento seguro (evita errores si algún registro no tiene fecha)
+            items.sort((a, b) => {
+                let dateA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+                let dateB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+                return dateA - dateB;
+            });
+
+            tbody.innerHTML = '';
+            // Mostrar solo los últimos 6
+            items.slice(-6).reverse().forEach(data => {
+                appendHistoryRow(tbody, data);
+            });
+        }
+
+        // Función para forzar la sincronización si el WebSocket local falla
+        window.forceSync = async () => {
+            if (!db) {
+                loadFlightHistoryFromLocal();
+                return;
+            }
+            try {
+                const snapshot = await db.collection("vuelos_drone").get();
+                renderTableFromSnapshot(snapshot);
+            } catch (error) {
+                console.error("Error forzando sync:", error);
+            }
+        };
 
         window.saveReportToCloud = async (reportData) => {
             // Backup Local
@@ -391,21 +421,130 @@
         }
 
         function appendHistoryRow(tbody, data) {
+            const safeDataStr = JSON.stringify(data).replace(/'/g, "\\'"); // Limpiamos strings para el onclick
+
             tbody.innerHTML += `
-                <tr class="border-b border-slate-800 hover:bg-slate-800/50 cursor-pointer" onclick='loadReportSnapshot(${JSON.stringify(data)})'>
-                    <td class="p-2 font-mono text-sky-400">${data.shift || 'Turno Reciente'}</td>
-                    <td class="p-2">${data.scanned} / ${data.total}</td>
-                    <td class="p-2 text-green-400">${data.batteryLeft}%</td>
-                    <td class="p-2"><button class="bg-blue-600 hover:bg-blue-500 text-white px-2 py-1 rounded text-[10px]">Ver Dashboard</button></td>
+                <tr class="border-b border-slate-800 hover:bg-slate-800/50 transition-colors">
+                    <td class="p-2 font-mono text-sky-400 cursor-pointer" onclick='loadReportSnapshot(${safeDataStr})'>${data.shift || 'Turno Reciente'}</td>
+                    <td class="p-2 cursor-pointer" onclick='loadReportSnapshot(${safeDataStr})'>${data.scanned} / ${data.total}</td>
+                    <td class="p-2 text-green-400 cursor-pointer" onclick='loadReportSnapshot(${safeDataStr})'>${data.batteryLeft}%</td>
+                    <td class="p-2 flex gap-1">
+                        <button onclick='loadReportSnapshot(${safeDataStr})' class="bg-blue-600 hover:bg-blue-500 text-white px-2 py-1 rounded text-[10px]">Dashboard</button>
+                        ${data._id ? `<button onclick="deleteRecord('${data._id}')" class="bg-red-600 hover:bg-red-500 text-white px-2 py-1 rounded text-[10px]" title="Borrar de Firebase">🗑️</button>` : ''}
+                    </td>
                 </tr>
             `;
         }
+
+        // Función para borrar registros directo desde la tabla hacia la nube
+        window.deleteRecord = async (id) => {
+            if(!db) return;
+            if(confirm("¿Estás seguro de eliminar este registro del historial y de Firebase?")) {
+                try {
+                    await db.collection("vuelos_drone").doc(id).delete();
+                    console.log("Registro eliminado correctamente");
+                    // Al borrarlo, el onSnapshot automáticamente refrescará la tabla.
+                    // Si falla el socket (modo local), forzamos el sync:
+                    setTimeout(forceSync, 500); 
+                } catch(e) {
+                    console.error("Error al borrar:", e);
+                    alert("No se pudo borrar. Verifica tus permisos o conexión.");
+                }
+            }
+        };
 
         window.loadReportSnapshot = (data) => {
             scanHistory.push(data);
             showReportModal();
             scanHistory.pop();
         };
+
+        // --- SISTEMA DE AUDIO (Web Audio API) ---
+        let audioCtx;
+        let motorOscillator, motorGain;
+        let isAudioEnabled = false;
+
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                
+                // Oscilador para el motor del dron
+                motorOscillator = audioCtx.createOscillator();
+                motorGain = audioCtx.createGain();
+                
+                motorOscillator.type = 'sawtooth'; // Sonido similar a zumbido mecánico
+                motorOscillator.frequency.value = 100; // Frecuencia base
+                
+                motorGain.gain.value = 0; // Silenciado inicialmente
+                
+                motorOscillator.connect(motorGain);
+                motorGain.connect(audioCtx.destination);
+                motorOscillator.start();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }
+
+        function toggleAudio() {
+            isAudioEnabled = !isAudioEnabled;
+            const btn = document.getElementById('btn-audio');
+            if (isAudioEnabled) {
+                initAudio();
+                btn.innerHTML = '🔊 Sonido: On';
+                btn.classList.replace('bg-slate-700', 'bg-blue-600');
+                btn.classList.replace('hover:bg-slate-600', 'hover:bg-blue-500');
+            } else {
+                if (motorGain) motorGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.1);
+                btn.innerHTML = '🔇 Sonido: Off';
+                btn.classList.replace('bg-blue-600', 'bg-slate-700');
+                btn.classList.replace('hover:bg-blue-500', 'hover:bg-slate-600');
+            }
+        }
+
+        function playBeep(type = 'scan') {
+            if (!isAudioEnabled || !audioCtx) return;
+            
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            
+            if (type === 'scan') {
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(1200, audioCtx.currentTime); // Tono agudo (beep de caja)
+                gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+                osc.start(audioCtx.currentTime);
+                osc.stop(audioCtx.currentTime + 0.1);
+            } else if (type === 'alert') {
+                osc.type = 'square';
+                osc.frequency.setValueAtTime(400, audioCtx.currentTime); // Tono de alerta (RTH)
+                osc.frequency.setValueAtTime(600, audioCtx.currentTime + 0.2);
+                gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.4);
+                osc.start(audioCtx.currentTime);
+                osc.stop(audioCtx.currentTime + 0.4);
+            }
+        }
+
+        function updateMotorSound() {
+            if (!isAudioEnabled || !motorGain || !motorOscillator) return;
+            
+            if (drone.state === 'flying' || drone.state === 'rth') {
+                // Sube volumen y tono (pitch) según la velocidad
+                motorGain.gain.setTargetAtTime(0.05 * simSpeedMult, audioCtx.currentTime, 0.1);
+                motorOscillator.frequency.setTargetAtTime(150 + (drone.speed * simSpeedMult * 0.2), audioCtx.currentTime, 0.1);
+            } else if (drone.state === 'charging') {
+                // Zumbido de recarga eléctrico (muy bajo y suave)
+                motorGain.gain.setTargetAtTime(0.02, audioCtx.currentTime, 0.1);
+                motorOscillator.frequency.setTargetAtTime(60, audioCtx.currentTime, 0.1);
+            } else {
+                // Silencio en idle
+                motorGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.1);
+            }
+        }
 
         // Simulación lógica y controles manuales
         let timeState = { day: 1, isMorning: true };
@@ -435,7 +574,8 @@
         let canvas2D, ctx;
         let products = [];
         let waypoints = [];
-        let drone = { x: 50, y: 50, speed: 150, angle: 0, state: 'idle', battery: 100 };
+        // Se añade estado 'rth' (Return to home) y 'charging'
+        let drone = { x: 50, y: 50, speed: 150, angle: 0, state: 'idle', battery: 100, savedWaypointIdx: 0 };
         let waypointIdx = 0;
         let running = false;
         let lastTime = 0;
@@ -590,6 +730,7 @@
             drone.x = waypoints[0].x;
             drone.y = waypoints[0].y;
             drone.angle = 0;
+            drone.savedWaypointIdx = 0;
             waypointIdx = 0;
             scannedCount = 0;
             missionTime = 0;
@@ -723,6 +864,7 @@
             globalTime += dt;
             
             if (running) updateLogic(dt);
+            updateMotorSound(); // Actualiza el sonido en cada frame
             
             if (!is3DView) {
                 draw2DWarehouse();
@@ -735,12 +877,23 @@
         }
 
         function updateLogic(dt) {
-            drone.battery -= dt * 1.8; 
-            if (drone.state === 'flying') missionTime += dt; 
+            // Consumo de batería
+            if (drone.state === 'flying' || drone.state === 'rth') {
+                drone.battery -= dt * 1.8; 
+                missionTime += dt; 
+            }
+
+            // Sistema RTH (Return To Home Automático)
+            if (drone.battery <= 15 && drone.state === 'flying' && !isManualMode) {
+                drone.state = 'rth';
+                drone.savedWaypointIdx = waypointIdx; // Guardamos dónde se quedó
+                setStatus('RTH: Batería Baja', 'bg-orange-500', 'bg-orange-400');
+                playBeep('alert');
+            }
 
             if (drone.battery <= 0) {
                 drone.battery = 0;
-                finishMission("Batería Agotada");
+                finishMission("Batería Agotada (Fallo Crítico)");
                 return;
             }
 
@@ -771,8 +924,23 @@
                 if (moved && drone.state !== 'flying') drone.state = 'flying';
                 else if (!moved && drone.state === 'flying') drone.state = 'idle';
 
-            } else if (waypointIdx < waypoints.length) {
-                const target = waypoints[waypointIdx];
+            } else if (drone.state === 'charging') {
+                // Lógica de recarga
+                drone.battery += dt * 15; // Recarga rápida a 15% por segundo (simulado)
+                setStatus('Recargando...', 'bg-blue-500', '');
+                
+                if (drone.battery >= 100) {
+                    drone.battery = 100;
+                    drone.state = 'flying';
+                    waypointIdx = drone.savedWaypointIdx; // Retomar misión
+                    setStatus('Escaneando...', 'bg-emerald-500', 'bg-emerald-400');
+                    playBeep('alert');
+                }
+            } else if (drone.state === 'rth' || (drone.state === 'flying' && waypointIdx < waypoints.length)) {
+                
+                // Si es RTH, el objetivo es la Base (x:50, y:60). Si no, es el waypoint normal
+                const target = (drone.state === 'rth') ? {x: 50, y: 60} : waypoints[waypointIdx];
+                
                 const dx = target.x - drone.x;
                 const dy = target.y - drone.y;
                 const dist = Math.hypot(dx, dy);
@@ -784,8 +952,14 @@
                 drone.angle += angleDiff * 5 * dt; 
 
                 if (dist < 5) {
-                    waypointIdx++;
-                    if (waypointIdx >= waypoints.length) finishMission("Misión Completada");
+                    if (drone.state === 'rth') {
+                        // Llegó a la base para recargar
+                        drone.state = 'charging';
+                    } else {
+                        // Avanza al siguiente waypoint normal
+                        waypointIdx++;
+                        if (waypointIdx >= waypoints.length) finishMission("Misión Completada");
+                    }
                 } else {
                     const move = Math.min(drone.speed * dt, dist);
                     drone.x += (dx / dist) * move;
@@ -796,28 +970,32 @@
             let uiNeedsUpdate = false;
             let aiTargetFound = false;
 
-            products.forEach((p, idx) => {
-                if (p.scanned || p.isMissing) return;
-                
-                const dist = Math.hypot(drone.x - p.x, drone.y - p.y);
-                if (dist < 150) aiTargetFound = true;
+            // Solo escanea si está volando normalmente (no durante RTH o carga)
+            if (drone.state === 'flying') {
+                products.forEach((p, idx) => {
+                    if (p.scanned || p.isMissing) return;
+                    
+                    const dist = Math.hypot(drone.x - p.x, drone.y - p.y);
+                    if (dist < 150) aiTargetFound = true;
 
-                if (dist < 120) {
-                    p.scanProgress += dt * 1.5;
-                    if (Math.random() < 0.2) scanLasers.push({ x1: drone.x, y1: drone.y, x2: p.x, y2: p.y, life: 0.1 });
+                    if (dist < 120) {
+                        p.scanProgress += dt * 1.5;
+                        if (Math.random() < 0.2) scanLasers.push({ x1: drone.x, y1: drone.y, x2: p.x, y2: p.y, life: 0.1 });
 
-                    if (p.scanProgress >= 1) {
-                        p.scanned = true;
-                        scannedCount++;
-                        uiNeedsUpdate = true;
-                        scanLasers.push({ x1: drone.x, y1: drone.y, x2: p.x, y2: p.y, life: 0.4, confirm: true });
-                        createParticles(p.x, p.y);
-                        updateRack3DColor(idx, 0x10b981);
+                        if (p.scanProgress >= 1) {
+                            p.scanned = true;
+                            scannedCount++;
+                            uiNeedsUpdate = true;
+                            scanLasers.push({ x1: drone.x, y1: drone.y, x2: p.x, y2: p.y, life: 0.4, confirm: true });
+                            createParticles(p.x, p.y);
+                            updateRack3DColor(idx, 0x10b981);
+                            playBeep('scan'); // Reproduce sonido al escanear
+                        }
+                    } else {
+                        p.scanProgress = Math.max(0, p.scanProgress - dt);
                     }
-                } else {
-                    p.scanProgress = Math.max(0, p.scanProgress - dt);
-                }
-            });
+                });
+            }
 
             const aiBox = document.getElementById('ai-target-box');
             if(aiBox) aiBox.style.display = (aiTargetFound && is3DView) ? 'block' : 'none';
