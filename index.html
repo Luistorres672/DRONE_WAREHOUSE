@@ -186,6 +186,7 @@
                     <table class="w-full text-left text-xs text-slate-300">
                         <thead class="bg-slate-800 text-slate-400 uppercase">
                             <tr>
+                                <th class="p-2 w-10 text-center" title="Seleccionar todos"><input type="checkbox" id="selectAllReports" onclick="toggleAllReports(this)" class="cursor-pointer"></th>
                                 <th class="p-2">Turno / Fecha</th>
                                 <th class="p-2">Escaneados</th>
                                 <th class="p-2">Batería Final</th>
@@ -193,7 +194,7 @@
                             </tr>
                         </thead>
                         <tbody id="historyTableBody">
-                            <tr><td colspan="4" class="p-3 text-center text-slate-500">Cargando historial de la nube...</td></tr>
+                            <tr><td colspan="5" class="p-3 text-center text-slate-500">Cargando historial de la nube...</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -294,8 +295,10 @@
 
     <!-- Script de Inicialización y Lógica -->
     <script>
+        // Si deseas usar la base de datos en la nube real, debes ir a la consola de 
+        // Firebase (firebase.google.com), crear un proyecto web y pegar aquí tu configuración.
         const firebaseConfig = {
-            apiKey: "AIzaSyCpx08YAxqvFLDYGySkTx3c4xo1Zf3fbyM",
+            apiKey: "AIzaSyCpx08YAxqvFLDYGySkTx3e4Xo1Zf3fbyM",
             authDomain: "drone-warehouse.firebaseapp.com",
             projectId: "drone-warehouse",
             storageBucket: "drone-warehouse.firebasestorage.app",
@@ -306,26 +309,38 @@
 
         let db = null;
         let unsubscribeRealtime = null;
+        window.loadedReports = []; // Almacena el historial para exportación multiturno
 
-        try {
-            firebase.initializeApp(firebaseConfig);
-            db = firebase.firestore();
-            firebase.auth().signInAnonymously().then(() => {
-                const cloudEl = document.getElementById('cloudStatus');
-                if(cloudEl) {
-                    cloudEl.innerText = "Conectado";
-                    cloudEl.className = "text-base text-green-400 font-bold";
-                }
-                listenToCloudHistory(); // Iniciar Escucha en Tiempo Real
-            }).catch(err => {
-                console.warn("Auth warning:", err);
-                const cloudEl = document.getElementById('cloudStatus');
-                if(cloudEl) cloudEl.innerText = "Modo Local";
-                loadFlightHistoryFromLocal();
-            });
-        } catch(e) {
-            console.error("Firebase init error:", e);
+        // Verificamos si tienes un API key configurada o es la de relleno
+        if (firebaseConfig.apiKey === "PON_AQUI_TU_API_KEY_REAL") {
+            console.log("🌩️ Trabajando en MODO LOCAL (No hay conexión a Firestore). Los datos se guardan en el navegador.");
+            const cloudEl = document.getElementById('cloudStatus');
+            if(cloudEl) {
+                cloudEl.innerText = "Modo Local";
+                cloudEl.className = "text-base text-yellow-500 font-bold";
+            }
             loadFlightHistoryFromLocal();
+        } else {
+            try {
+                firebase.initializeApp(firebaseConfig);
+                db = firebase.firestore();
+                firebase.auth().signInAnonymously().then(() => {
+                    const cloudEl = document.getElementById('cloudStatus');
+                    if(cloudEl) {
+                        cloudEl.innerText = "Conectado";
+                        cloudEl.className = "text-base text-green-400 font-bold";
+                    }
+                    listenToCloudHistory(); // Iniciar Escucha en Tiempo Real
+                }).catch(err => {
+                    console.warn("Auth advertencia (Usando Local):", err);
+                    const cloudEl = document.getElementById('cloudStatus');
+                    if(cloudEl) cloudEl.innerText = "Modo Local";
+                    loadFlightHistoryFromLocal();
+                });
+            } catch(e) {
+                console.error("Firebase init error:", e);
+                loadFlightHistoryFromLocal();
+            }
         }
 
         // Función para escuchar la base de datos en TIEMPO REAL
@@ -356,7 +371,8 @@
             });
             
             if(items.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="4" class="p-3 text-center text-slate-500">No hay registros en la nube (se borraron o no existen).</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="5" class="p-3 text-center text-slate-500">No hay registros en la nube (se borraron o no existen).</td></tr>`;
+                window.loadedReports = [];
                 return;
             }
 
@@ -366,6 +382,8 @@
                 let dateB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
                 return dateA - dateB;
             });
+
+            window.loadedReports = items;
 
             tbody.innerHTML = '';
             // Mostrar solo los últimos 6
@@ -419,9 +437,10 @@
             const tbody = document.getElementById('historyTableBody');
             if(!tbody) return;
             const local = JSON.parse(localStorage.getItem('drone_reports') || '[]');
+            window.loadedReports = local;
             tbody.innerHTML = '';
             if(local.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="4" class="p-3 text-center text-slate-500">No hay vuelos registrados aún. Completa un vuelo para ver el reporte.</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="5" class="p-3 text-center text-slate-500">No hay vuelos registrados aún. Completa un vuelo para ver el reporte.</td></tr>`;
                 return;
             }
             local.slice(-6).reverse().forEach(data => {
@@ -431,9 +450,13 @@
 
         function appendHistoryRow(tbody, data) {
             const safeDataStr = JSON.stringify(data).replace(/'/g, "\\'"); // Limpiamos strings para el onclick
+            const uniqueId = data._id || data.timestamp;
 
             tbody.innerHTML += `
                 <tr class="border-b border-slate-800 hover:bg-slate-800/50 transition-colors">
+                    <td class="p-2 text-center" onclick="event.stopPropagation()">
+                        <input type="checkbox" class="report-checkbox cursor-pointer" value="${uniqueId}">
+                    </td>
                     <td class="p-2 font-mono text-sky-400 cursor-pointer" onclick='loadReportSnapshot(${safeDataStr})'>${data.shift || 'Turno Reciente'}</td>
                     <td class="p-2 cursor-pointer" onclick='loadReportSnapshot(${safeDataStr})'>${data.scanned} / ${data.total}</td>
                     <td class="p-2 text-green-400 cursor-pointer" onclick='loadReportSnapshot(${safeDataStr})'>${data.batteryLeft}%</td>
@@ -444,6 +467,11 @@
                 </tr>
             `;
         }
+
+        window.toggleAllReports = function(source) {
+            const checkboxes = document.querySelectorAll('.report-checkbox');
+            checkboxes.forEach(cb => cb.checked = source.checked);
+        };
 
         // Función para borrar registros directo desde la tabla hacia la nube
         window.deleteRecord = async (id) => {
@@ -1119,36 +1147,47 @@
         }
 
         function exportToPowerBI() {
-            if (scanHistory.length === 0) {
-                alert("No hay datos para exportar. Por favor completa al menos un vuelo de escaneo primero.");
+            const checkboxes = document.querySelectorAll('.report-checkbox:checked');
+            if (checkboxes.length === 0) {
+                alert("Por favor marca al menos una casilla en la tabla de historial para exportar el turno.");
                 return;
             }
             
-            const latestReport = scanHistory[scanHistory.length - 1];
-            const timestampStr = latestReport.timestamp || new Date().toISOString();
+            const selectedIds = Array.from(checkboxes).map(cb => cb.value);
+            const reportsToExport = window.loadedReports.filter(r => 
+                selectedIds.includes(r._id) || selectedIds.includes(r.timestamp)
+            );
             
             let csvContent = "Fecha_Escaneo,Turno_Asignado,SKU,Descripcion_Producto,Ubicacion_Fisica,Cantidad_Teorica,Estado_Validacion,Bateria_Dron_Final\n";
             
-            latestReport.raw.forEach(p => {
-                const estado = p.scanned ? "Confirmado_OK" : "Discrepancia_Faltante";
-                const row = [
-                    timestampStr, 
-                    latestReport.shift, 
-                    p.id, 
-                    p.name, 
-                    p.loc, 
-                    p.qty || 1, 
-                    estado, 
-                    latestReport.batteryLeft + "%"
-                ].join(",");
-                csvContent += row + "\n";
+            reportsToExport.forEach(report => {
+                const timestampStr = report.timestamp || new Date().toISOString();
+                report.raw.forEach(p => {
+                    const estado = p.scanned ? "Confirmado_OK" : "Discrepancia_Faltante";
+                    const row = [
+                        timestampStr, 
+                        report.shift, 
+                        p.id, 
+                        p.name, 
+                        p.loc, 
+                        p.qty || 1, 
+                        estado, 
+                        report.batteryLeft + "%"
+                    ].join(",");
+                    csvContent += row + "\n";
+                });
             });
             
             const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
             const url = URL.createObjectURL(blob);
             const link = document.createElement("a");
             link.setAttribute("href", url);
-            link.setAttribute("download", `Drone_Reporte_PowerBI_${latestReport.shift.replace(/\s+/g, '_')}.csv`);
+            
+            const fileName = checkboxes.length === 1 
+                ? `Drone_Reporte_PowerBI_${reportsToExport[0].shift.replace(/\s+/g, '_')}.csv`
+                : `Drone_Reporte_PowerBI_Multiturno.csv`;
+                
+            link.setAttribute("download", fileName);
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
