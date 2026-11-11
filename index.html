@@ -622,8 +622,8 @@
         let canvas2D, ctx;
         let products = [];
         let waypoints = [];
-        // Se añade estado 'rth' (Return to home) y 'charging'
-        let drone = { x: 50, y: 50, speed: 150, angle: 0, state: 'idle', battery: 100, savedWaypointIdx: 0 };
+        // Se añade coordenada 'z' para vuelo tridimensional, targetZ para suavizado
+        let drone = { x: 50, y: 50, z: 15, targetZ: 15, speed: 150, angle: 0, state: 'idle', battery: 100, savedWaypointIdx: 0 };
         let waypointIdx = 0;
         let running = false;
         let lastTime = 0;
@@ -686,8 +686,9 @@
             
             const origenes = ['Local', 'Regional', 'Nacional', 'Importación'];
             const rotaciones = ['Alta (A)', 'Media (B)', 'Baja (C)'];
-            // 70% cajas perfectas, 30% con anomalías de almacén
-            const posiblesErrores = [null, null, null, null, null, null, null, 'missing', 'misplaced', 'damaged'];
+            // Se añaden 3 errores nuevos de almacén: blocked, expired, wrong_orientation
+            const posiblesErrores = [null, null, null, null, null, 'missing', 'misplaced', 'damaged', 'blocked', 'expired', 'wrong_orientation'];
+            const shelfHeights = [10, 25, 40]; // Alturas físicas de los niveles en los racks 3D
             
             const rackConfig = [
                 { name: 'Drive-In (C)', startX: 100, cols: 1, spaceX: 0, rows: 6, spaceY: 55 },
@@ -699,17 +700,20 @@
                 for(let c=0; c<zone.cols; c++) {
                     for(let r=0; r<zone.rows; r++) {
                         let error = posiblesErrores[Math.floor(Math.random() * posiblesErrores.length)];
+                        let nivelIdx = Math.floor(Math.random() * 3); // Nivel 0, 1 o 2
+                        
                         products.push({
                             id: `SKU-${skuCounter++}`, 
                             name: `Caja ${zone.name}`, 
                             qty: Math.floor(Math.random() * 50) + 10,
-                            loc: `${zone.name.split(' ')[0]}-P${c+1}-N${r+1}`,
+                            loc: `${zone.name.split(' ')[0]}-P${c+1}-N${r+1}-Lvl${nivelIdx+1}`,
                             x: zone.startX + c * zone.spaceX,
                             y: 150 + r * zone.spaceY,
+                            z: shelfHeights[nivelIdx], // Altura específica asignada
                             origen: origenes[Math.floor(Math.random() * origenes.length)],
                             rotacion: rotaciones[Math.floor(Math.random() * rotaciones.length)],
                             errorType: error,
-                            isMissing: error === 'missing', // Compatibilidad
+                            isMissing: error === 'missing',
                             scanned: false, scanProgress: 0
                         });
                     }
@@ -821,6 +825,8 @@
             drone.battery = 100;
             drone.x = waypoints[0].x;
             drone.y = waypoints[0].y;
+            drone.z = 15;
+            drone.targetZ = 15;
             drone.angle = 0;
             drone.savedWaypointIdx = 0;
             waypointIdx = 0;
@@ -969,7 +975,7 @@
         }
 
         function updateLogic(dt) {
-            // Consumo de batería
+            // Consumo de batería base
             if (drone.state === 'flying' || drone.state === 'rth') {
                 drone.battery -= dt * 1.8; 
                 missionTime += dt; 
@@ -1059,23 +1065,63 @@
                 }
             }
 
+            // ---------- LÓGICA DE ESCANEO 3D (EJE Z) ----------
+            let nearestZ = null;
+            let minDistToItem = Infinity;
             let uiNeedsUpdate = false;
             let aiTargetFound = false;
 
-            // Solo escanea si está volando normalmente (no durante RTH o carga)
+            if (drone.state === 'flying' && !isManualMode) {
+                products.forEach(p => {
+                    if (!p.scanned && !p.isMissing) {
+                        let d = Math.hypot(drone.x - p.x, drone.y - p.y);
+                        if (d < 120 && d < minDistToItem) {
+                            minDistToItem = d;
+                            nearestZ = p.z; // Altura de la caja a escanear
+                        }
+                    }
+                });
+                
+                if (nearestZ !== null) {
+                    drone.targetZ = nearestZ + 5; // Ajusta su altura al nivel de la repisa
+                } else {
+                    drone.targetZ = 45; // Altitud de crucero (para avanzar pasillos)
+                }
+            } else if (drone.state === 'rth' || drone.state === 'charging' || drone.state === 'idle') {
+                drone.targetZ = 15; // Altura de aterrizaje/base
+            } else if (isManualMode) {
+                drone.targetZ = 35; // Altura fija de seguridad en manual
+            }
+
+            // Suavizado del movimiento Z y Física de Batería
+            const dz = drone.targetZ - drone.z;
+            if (Math.abs(dz) > 1) {
+                drone.z += Math.sign(dz) * drone.speed * 0.4 * dt; // Sube/baja gradualmente
+                // Subir requiere mucha más potencia (gasta más batería)
+                if (dz > 0 && (drone.state === 'flying' || drone.state === 'rth')) {
+                    drone.battery -= dt * 1.2; 
+                }
+            }
+
+            // Solo escanea si está volando normalmente y a la altura correcta
             if (drone.state === 'flying') {
                 products.forEach((p, idx) => {
                     if (p.scanned || p.isMissing) return;
                     
-                    const dist = Math.hypot(drone.x - p.x, drone.y - p.y);
-                    if (dist < 150) aiTargetFound = true;
+                    // Comprobación cilíndrica 3D (X, Y y Z deben coincidir razonablemente)
+                    const distPlane = Math.hypot(drone.x - p.x, drone.y - p.y);
+                    const distHeight = Math.abs(drone.z - (p.z + 5));
+                    
+                    if (distPlane < 150 && distHeight < 25) aiTargetFound = true;
 
-                    if (dist < 120) {
-                        // Si la etiqueta está dañada, el escáner batalla para leer (es 3 veces más lento)
-                        if (p.errorType === 'damaged') {
-                            p.scanProgress += dt * 0.4;
+                    if (distPlane < 120 && distHeight < 20) {
+                        // Ralentizaciones de cámara por Anomalías
+                        if (p.errorType === 'blocked') {
+                            p.scanProgress += dt * 0.2; // Extremadamente lento, código tapado
+                        } else if (p.errorType === 'damaged' || p.errorType === 'wrong_orientation') {
+                            p.scanProgress += dt * 0.4; // Lento, IA intentando descifrar
                         } else {
-                            p.scanProgress += dt * 1.5;
+                            p.scanProgress += dt * 1.5; // Normal
                         }
 
                         if (Math.random() < 0.2) scanLasers.push({ x1: drone.x, y1: drone.y, x2: p.x, y2: p.y, life: 0.1 });
@@ -1087,9 +1133,12 @@
                             scanLasers.push({ x1: drone.x, y1: drone.y, x2: p.x, y2: p.y, life: 0.4, confirm: true });
                             createParticles(p.x, p.y);
                             
-                            // Color 3D según resultado de la IA
-                            if (p.errorType === 'misplaced') updateRack3DColor(idx, 0xf97316); // Naranja (Mal ubicado)
-                            else if (p.errorType === 'damaged') updateRack3DColor(idx, 0xeab308); // Amarillo (Etiqueta Dañada)
+                            // Color 3D según resultado de la IA Avanzada
+                            if (p.errorType === 'misplaced') updateRack3DColor(idx, 0xf97316); // Naranja
+                            else if (p.errorType === 'damaged') updateRack3DColor(idx, 0xeab308); // Amarillo
+                            else if (p.errorType === 'blocked') updateRack3DColor(idx, 0x78716c); // Gris
+                            else if (p.errorType === 'expired') updateRack3DColor(idx, 0xa855f7); // Morado
+                            else if (p.errorType === 'wrong_orientation') updateRack3DColor(idx, 0x0ea5e9); // Cyan
                             else updateRack3DColor(idx, 0x10b981); // Verde (OK)
                             
                             playBeep('scan'); // Reproduce sonido al escanear
@@ -1376,7 +1425,8 @@
 
             products.forEach((p, idx) => {
                 const isDriveIn = p.x < 200;
-                const rackGroup = createDetailedRack(isDriveIn);
+                // Pasamos la altura Z del producto para ubicar la caja correctamente
+                const rackGroup = createDetailedRack(isDriveIn, p.z);
                 rackGroup.position.set(mapX(p.x), 0, mapZ(p.y));
                 
                 if (!isDriveIn) {
@@ -1389,7 +1439,7 @@
             });
         }
 
-        function createDetailedRack(isDriveIn = false) {
+        function createDetailedRack(isDriveIn = false, productZ = 10) {
             const group = new THREE.Group();
             const postMat = new THREE.MeshStandardMaterial({color: 0x475569, metalness: 0.8, roughness: 0.4});
             
@@ -1414,7 +1464,8 @@
             const boxGeo = new THREE.BoxGeometry(14, 10, 14);
             const boxMat = new THREE.MeshStandardMaterial({color: 0x64748b, roughness: 0.9});
             const targetBox = new THREE.Mesh(boxGeo, boxMat);
-            targetBox.position.set(0, 30.5, 0);
+            // La caja se posiciona físicamente en la repisa asignada
+            targetBox.position.set(0, productZ + 5.5, 0);
             targetBox.userData.isTargetBox = true; 
             group.add(targetBox);
 
@@ -1441,7 +1492,9 @@
                 
                 droneMesh.position.x += diffX * 5 * dt;
                 droneMesh.position.z += diffZ * 5 * dt;
-                droneMesh.position.y = drone.state === 'flying' ? 60 + Math.sin(globalTime * 3) * 2 : 15;
+                
+                // Mapeo real de la altura Z del dron + un ligero balanceo constante
+                droneMesh.position.y = drone.z + (drone.state === 'flying' ? Math.sin(globalTime * 3) * 2 : 0);
                 
                 droneMesh.rotation.y = -drone.angle;
                 droneMesh.rotation.z = Math.max(-0.2, Math.min(0.2, -diffX * 0.015));
@@ -1547,6 +1600,15 @@
                 } else if (p.errorType === 'damaged') {
                     statusEl.innerHTML = "⚠️ CÓDIGO DAÑADO";
                     statusEl.className = "mt-2 text-xs font-bold text-center p-2 rounded bg-yellow-900/50 text-yellow-400 border border-yellow-700";
+                } else if (p.errorType === 'blocked') {
+                    statusEl.innerHTML = "🧱 OBSTRUIDO / TAPADO";
+                    statusEl.className = "mt-2 text-xs font-bold text-center p-2 rounded bg-gray-900/50 text-gray-400 border border-gray-700";
+                } else if (p.errorType === 'expired') {
+                    statusEl.innerHTML = "⏱️ CADUCIDAD VENCIDA";
+                    statusEl.className = "mt-2 text-xs font-bold text-center p-2 rounded bg-purple-900/50 text-purple-400 border border-purple-700";
+                } else if (p.errorType === 'wrong_orientation') {
+                    statusEl.innerHTML = "🙃 ETIQUETA VOLTEADA";
+                    statusEl.className = "mt-2 text-xs font-bold text-center p-2 rounded bg-sky-900/50 text-sky-400 border border-sky-700";
                 } else {
                     statusEl.innerHTML = "✅ INVENTARIADO";
                     statusEl.className = "mt-2 text-xs font-bold text-center p-2 rounded bg-emerald-900/50 text-emerald-400 border border-emerald-700";
@@ -1582,6 +1644,18 @@
                         statusClass = 'bg-yellow-900/40 border-yellow-500/30';
                         statusText = '📛 Daño';
                         textCol = 'text-yellow-400';
+                    } else if (p.errorType === 'blocked') {
+                        statusClass = 'bg-gray-900/40 border-gray-500/30';
+                        statusText = '🧱 Tapado';
+                        textCol = 'text-gray-400';
+                    } else if (p.errorType === 'expired') {
+                        statusClass = 'bg-purple-900/40 border-purple-500/30';
+                        statusText = '⏱️ Caduc';
+                        textCol = 'text-purple-400';
+                    } else if (p.errorType === 'wrong_orientation') {
+                        statusClass = 'bg-sky-900/40 border-sky-500/30';
+                        statusText = '🙃 Giro';
+                        textCol = 'text-sky-400';
                     } else {
                         statusClass = 'bg-emerald-900/40 border-emerald-500/30';
                         statusText = '✔ OK';
@@ -1666,12 +1740,15 @@
                 const missingPct = ((curr.missing / curr.total) * 100).toFixed(1);
                 html += `<p class="leading-relaxed mb-2"><strong class="text-[#fd625e]">Alerta Operativa:</strong> Se detectó una discrepancia del <strong class="text-white">${missingPct}%</strong> (${curr.missing} items extraviados totalmente).</p>`;
                 
-                // Calcular anomalías logísticas (NUEVO)
+                // Calcular anomalías logísticas avanzadas
                 const misplaced = curr.raw.filter(p => p.scanned && p.errorType === 'misplaced').length;
                 const damaged = curr.raw.filter(p => p.scanned && p.errorType === 'damaged').length;
+                const blocked = curr.raw.filter(p => p.scanned && p.errorType === 'blocked').length;
+                const expired = curr.raw.filter(p => p.scanned && p.errorType === 'expired').length;
+                const wrongOri = curr.raw.filter(p => p.scanned && p.errorType === 'wrong_orientation').length;
                 
-                if (misplaced > 0 || damaged > 0) {
-                    html += `<p class="leading-relaxed text-orange-400 mb-2">🔍 <strong>Anomalías Logísticas:</strong> Se detectaron ${misplaced} cajas en ubicaciones equivocadas y ${damaged} con códigos de barras dañados/ilegibles.</p>`;
+                if (misplaced > 0 || damaged > 0 || blocked > 0 || expired > 0 || wrongOri > 0) {
+                    html += `<p class="leading-relaxed text-orange-400 mb-2">🔍 <strong>Anomalías Logísticas:</strong> Se detectaron ${misplaced} mal ubicadas, ${damaged} dañadas, ${blocked} obstruidas por tarimas, ${expired} caducadas y ${wrongOri} mal orientadas. <em>El escáner tridimensional ajustó su altura para intentar resolverlas.</em></p>`;
                 }
 
                 const lossStr = curr.financialLoss.toLocaleString();
