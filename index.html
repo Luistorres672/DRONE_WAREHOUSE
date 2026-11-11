@@ -108,6 +108,9 @@
                 <button onclick="simularLogistica()" class="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-semibold transition shadow-lg shadow-indigo-500/30 flex items-center gap-2" title="Ejecuta ventas, reubicación y anomalías en el almacén">
                     📦 Simular Logística
                 </button>
+                <button onclick="toggleHeatmap()" id="btn-heatmap" class="px-5 py-2 bg-orange-600 hover:bg-orange-500 text-white rounded-lg font-semibold transition shadow-lg shadow-orange-500/30 flex items-center gap-2" title="Activa el mapa de calor de anomalías en Vista 2D">
+                    🔥 Mapa de Calor
+                </button>
                 <button onclick="exportToPowerBI()" class="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-semibold transition shadow-lg shadow-emerald-500/30 flex items-center gap-2">
                     📊 Exportar CSV 
                 </button>
@@ -176,6 +179,10 @@
                             <span class="text-slate-400 block text-[10px] uppercase">Rotación</span>
                             <span id="detail-rot" class="font-bold text-purple-400">-</span>
                         </div>
+                        <div class="bg-slate-800 p-2 rounded border border-slate-700 col-span-2 text-center">
+                            <span class="text-slate-400 block text-[10px] uppercase">Categoría Logística</span>
+                            <span id="detail-cat" class="font-bold text-yellow-400">-</span>
+                        </div>
                     </div>
                     <div id="detail-boxes" class="text-xs text-slate-300 mb-3 text-center bg-slate-800/50 py-1 rounded">-- cajas --</div>
                     <div id="detail-status" class="mt-2 text-xs font-bold text-center p-2 rounded bg-slate-800">Estado</div>
@@ -242,7 +249,7 @@
             </div>
             
             <div class="p-6 grid grid-cols-1 lg:grid-cols-4 gap-4 bg-[#111827] flex-1">
-                <div class="col-span-1 lg:col-span-4 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-2">
+                <div class="col-span-1 lg:col-span-4 grid grid-cols-2 md:grid-cols-4 gap-4 mb-2">
                     <div class="power-bi-card">
                         <div class="text-gray-400 text-xs font-semibold uppercase mb-1">Total Items Base</div>
                         <div class="text-3xl font-light text-white" id="rep-total">0</div>
@@ -273,6 +280,16 @@
                         <div class="text-3xl font-light text-white" id="rep-loss">$0</div>
                         <div class="text-xs text-rose-400 mt-2">Costo prom. $120/ud</div>
                     </div>
+                    <div class="power-bi-card" style="border-left-color: #f59e0b;">
+                        <div class="text-gray-400 text-xs font-semibold uppercase mb-1">Stock Crítico</div>
+                        <div class="text-3xl font-light text-white" id="rep-lowstock">0</div>
+                        <div class="text-xs text-amber-400 mt-2">Requiere reabastecimiento</div>
+                    </div>
+                    <div class="power-bi-card" style="border-left-color: #10b981;">
+                        <div class="text-gray-400 text-xs font-semibold uppercase mb-1">Valor Inventario</div>
+                        <div class="text-3xl font-light text-white" id="rep-totalvalue">$0</div>
+                        <div class="text-xs text-emerald-400 mt-2">Capital almacenado</div>
+                    </div>
                 </div>
 
                 <div class="col-span-1 lg:col-span-1 bg-[#1f2937] p-4 shadow-sm flex flex-col border border-gray-800">
@@ -298,6 +315,10 @@
                     <div class="bg-[#1f2937] p-4 shadow-sm border border-gray-800 md:col-span-2">
                         <h3 class="text-gray-200 font-semibold mb-3 text-sm">Tendencia de Eficiencia Energética</h3>
                         <div class="w-full h-48 relative"><canvas id="chart-battery"></canvas></div>
+                    </div>
+                    <div class="bg-[#1f2937] p-4 shadow-sm border border-gray-800 md:col-span-1">
+                        <h3 class="text-gray-200 font-semibold mb-3 text-sm">Distribución por Categoría</h3>
+                        <div class="w-full h-48 relative"><canvas id="chart-category"></canvas></div>
                     </div>
                 </div>
             </div>
@@ -600,6 +621,7 @@
         let simSpeedMult = 2;
         let is3DView = false;
         let isManualMode = false;
+        let isHeatmapMode = false;
         let missionTime = 0; 
         let keys = { w: false, a: false, s: false, d: false };
 
@@ -636,6 +658,7 @@
         let chartAccuracyObj = null;
         let chartZonesObj = null;
         let chartBatteryObj = null;
+        let chartCategoryObj = null;
 
         const raycaster = new THREE.Raycaster();
         const mouse = new THREE.Vector2();
@@ -686,6 +709,7 @@
             
             const origenes = ['Local', 'Regional', 'Nacional', 'Importación'];
             const rotaciones = ['Alta (A)', 'Media (B)', 'Baja (C)'];
+            const categorias = ['Carga General (Ambiente)', 'Refrigerado (Cold Chain)', 'Material Peligroso (HAZMAT)'];
             // Se añaden 3 errores nuevos de almacén: blocked, expired, wrong_orientation
             const posiblesErrores = [null, null, null, null, null, 'missing', 'misplaced', 'damaged', 'blocked', 'expired', 'wrong_orientation'];
             const shelfHeights = [10, 25, 40]; // Alturas físicas de los niveles en los racks 3D
@@ -712,6 +736,7 @@
                             z: shelfHeights[nivelIdx], // Altura específica asignada
                             origen: origenes[Math.floor(Math.random() * origenes.length)],
                             rotacion: rotaciones[Math.floor(Math.random() * rotaciones.length)],
+                            categoria: categorias[Math.floor(Math.random() * categorias.length)],
                             errorType: error,
                             isMissing: error === 'missing',
                             scanned: false, scanProgress: 0
@@ -774,17 +799,23 @@
             let reubicados = 0;
 
             products.forEach(p => {
-                // 1. Simular Ventas (Despachos)
-                if (Math.random() < 0.4) {
-                    let sold = Math.floor(Math.random() * 15) + 1;
-                    p.qty = Math.max(0, p.qty - sold);
+                // 1. Simular Ventas (Depende de la Rotación)
+                let probVenta = p.rotacion === 'Alta (A)' ? 0.8 : (p.rotacion === 'Media (B)' ? 0.4 : 0.1);
+                if (Math.random() < probVenta) {
+                    let sold = Math.floor(Math.random() * 15) + 5; // Venden entre 5 y 20
+                    // IMPORTANTE: Nunca dejamos que baje de 1 para no perder el inventario del sistema
+                    p.qty = Math.max(1, p.qty - sold);
                     ventas += sold;
                 }
-                // 2. Reabastecimiento a proveedores
-                if (p.qty < 5) {
-                    p.qty += Math.floor(Math.random() * 80) + 20;
+                
+                // 2. Reabastecimiento Inteligente (Mínimos y Máximos)
+                let minStock = p.rotacion === 'Alta (A)' ? 30 : (p.rotacion === 'Media (B)' ? 15 : 5);
+                if (p.qty < minStock) {
+                    let restock = p.rotacion === 'Alta (A)' ? 100 : (p.rotacion === 'Media (B)' ? 50 : 20);
+                    p.qty += restock;
                     reabastecidos++;
                 }
+                
                 // 3. WMS Inteligente: Mover Rotación Alta a la zona de Picking
                 if (p.rotacion === 'Alta (A)' && !p.loc.includes('Picking')) {
                     // Montacargas mueve físicamente la caja a la zona de Picking
@@ -875,6 +906,19 @@
             const valEl = document.getElementById("speed-val");
             if(valEl) valEl.textContent = val + "x";
         }
+
+        window.toggleHeatmap = function() {
+            isHeatmapMode = !isHeatmapMode;
+            const btn = document.getElementById('btn-heatmap');
+            if (isHeatmapMode) {
+                btn.classList.replace('bg-orange-600', 'bg-red-600');
+                btn.classList.replace('hover:bg-orange-500', 'hover:bg-red-500');
+            } else {
+                btn.classList.replace('bg-red-600', 'bg-orange-600');
+                btn.classList.replace('hover:bg-red-500', 'hover:bg-orange-500');
+            }
+            if(!is3DView) draw2DWarehouse(); // Forzar redibujado 2D
+        };
 
         function toggleView() {
             is3DView = !is3DView;
@@ -1167,6 +1211,8 @@
             const scannedItems = products.filter(p => p.scanned).length;
             const missingItems = products.length - scannedItems;
             const financialLoss = missingItems * 120; 
+            const totalValue = products.reduce((sum, p) => sum + (p.qty * 120), 0);
+            const lowStockCount = products.filter(p => p.qty < (p.rotacion === 'Alta (A)' ? 30 : (p.rotacion === 'Media (B)' ? 15 : 5))).length;
             
             const newReport = {
                 shift: shiftName,
@@ -1177,6 +1223,8 @@
                 batteryLeft: Math.round(drone.battery),
                 flightTime: Math.round(missionTime),
                 financialLoss: financialLoss,
+                totalValue: totalValue,
+                lowStock: lowStockCount,
                 wasManual: isManualMode,
                 raw: JSON.parse(JSON.stringify(products))
             };
@@ -1204,7 +1252,13 @@
             ctx.fillStyle = "rgba(255,255,255,0.02)";
             ctx.fillRect(80, 120, canvas2D.width - 100, 360);
 
-            if (waypoints.length > 0) {
+            // Capa base oscurecida si Heatmap está activo
+            if (isHeatmapMode) {
+                ctx.fillStyle = "rgba(15, 23, 42, 0.7)";
+                ctx.fillRect(0, 0, canvas2D.width, canvas2D.height);
+            }
+
+            if (waypoints.length > 0 && !isHeatmapMode) {
                 ctx.beginPath();
                 ctx.moveTo(waypoints[0].x, waypoints[0].y);
                 for(let i=1; i<waypoints.length; i++) ctx.lineTo(waypoints[i].x, waypoints[i].y);
@@ -1223,42 +1277,81 @@
                 const rw = isDriveIn ? 60 : 30;
                 const rh = isDriveIn ? 30 : 40;
                 
-                ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(p.x - rw/2, p.y - rh/2 + 5, rw, rh);
-                ctx.fillStyle = "#1e293b"; ctx.fillRect(p.x - rw/2, p.y - rh/2, rw, rh);
-                ctx.strokeStyle = "#334155"; ctx.lineWidth = 1; ctx.strokeRect(p.x - rw/2, p.y - rh/2, rw, rh);
+                if (!isHeatmapMode) {
+                    ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(p.x - rw/2, p.y - rh/2 + 5, rw, rh);
+                    ctx.fillStyle = "#1e293b"; ctx.fillRect(p.x - rw/2, p.y - rh/2, rw, rh);
+                    ctx.strokeStyle = "#334155"; ctx.lineWidth = 1; ctx.strokeRect(p.x - rw/2, p.y - rh/2, rw, rh);
+                }
 
-                if (p.scanProgress > 0 && !p.scanned) { ctx.shadowBlur = 10; ctx.shadowColor = "#3b82f6"; }
+                if (p.scanProgress > 0 && !p.scanned && !isHeatmapMode) { ctx.shadowBlur = 10; ctx.shadowColor = "#3b82f6"; }
                 
-                ctx.fillStyle = p.scanned ? "#10b981" : (p.scanProgress > 0 ? "#3b82f6" : "#64748b");
-                if (p.isMissing && !running && drone.state === 'idle' && waypointIdx > 0) ctx.fillStyle = "#ef4444"; 
+                // Determinamos colores normales
+                let fillColor = p.scanned ? "#10b981" : (p.scanProgress > 0 ? "#3b82f6" : "#64748b");
+                if (p.isMissing && !running && drone.state === 'idle' && waypointIdx > 0) fillColor = "#ef4444"; 
                 
-                ctx.fillRect(p.x - 10, p.y - 10, 20, 20);
-                ctx.shadowBlur = 0; 
+                // Determinamos si es stock bajo
+                let isLowStock = p.qty < (p.rotacion === 'Alta (A)' ? 30 : (p.rotacion === 'Media (B)' ? 15 : 5));
 
-                ctx.fillStyle = "#f8fafc"; ctx.font = "bold 8px Inter"; ctx.textAlign = "center";
-                ctx.fillText(p.id.split('-')[1], p.x, p.y + 3);
+                // Si el heatmap está activo, solo dibujamos anomalías como manchas rojas/naranjas
+                if (isHeatmapMode) {
+                    if (p.errorType !== null || p.isMissing) {
+                        let radGrad = ctx.createRadialGradient(p.x, p.y, 5, p.x, p.y, 40);
+                        radGrad.addColorStop(0, "rgba(239, 68, 68, 0.8)"); // Rojo centro
+                        radGrad.addColorStop(1, "rgba(239, 68, 68, 0)");   // Desvanece
+                        ctx.fillStyle = radGrad;
+                        ctx.beginPath(); ctx.arc(p.x, p.y, 40, 0, Math.PI*2); ctx.fill();
+                        
+                        ctx.fillStyle = "#ffffff";
+                        ctx.fillRect(p.x - 3, p.y - 3, 6, 6);
+                    } else if (isLowStock) {
+                        let radGrad = ctx.createRadialGradient(p.x, p.y, 5, p.x, p.y, 30);
+                        radGrad.addColorStop(0, "rgba(245, 158, 11, 0.6)"); // Ambar centro
+                        radGrad.addColorStop(1, "rgba(245, 158, 11, 0)");   
+                        ctx.fillStyle = radGrad;
+                        ctx.beginPath(); ctx.arc(p.x, p.y, 30, 0, Math.PI*2); ctx.fill();
+                    }
+                } else {
+                    ctx.fillStyle = fillColor;
+                    ctx.fillRect(p.x - 10, p.y - 10, 20, 20);
+                    if (isLowStock) {
+                        ctx.strokeStyle = "#f59e0b"; // Ambar
+                        ctx.lineWidth = 2;
+                        ctx.strokeRect(p.x - 12, p.y - 12, 24, 24);
+                    }
+                    ctx.shadowBlur = 0; 
+                    ctx.fillStyle = "#f8fafc"; ctx.font = "bold 8px Inter"; ctx.textAlign = "center";
+                    ctx.fillText(p.id.split('-')[1], p.x, p.y + 3);
+                }
             });
 
-            scanLasers.forEach(l => {
-                ctx.beginPath(); ctx.moveTo(l.x1, l.y1); ctx.lineTo(l.x2, l.y2);
-                ctx.strokeStyle = l.confirm ? `rgba(16, 185, 129, ${l.life*2})` : `rgba(59, 130, 246, ${l.life*3})`;
-                ctx.lineWidth = l.confirm ? 3 : 1; ctx.stroke();
-            });
+            if (!isHeatmapMode) {
+                scanLasers.forEach(l => {
+                    ctx.beginPath(); ctx.moveTo(l.x1, l.y1); ctx.lineTo(l.x2, l.y2);
+                    ctx.strokeStyle = l.confirm ? `rgba(16, 185, 129, ${l.life*2})` : `rgba(59, 130, 246, ${l.life*3})`;
+                    ctx.lineWidth = l.confirm ? 3 : 1; ctx.stroke();
+                });
 
-            particles.forEach(p => {
-                ctx.fillStyle = p.color; ctx.globalAlpha = Math.max(0, p.life);
-                ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI*2); ctx.fill();
-            });
-            ctx.globalAlpha = 1.0;
+                particles.forEach(p => {
+                    ctx.fillStyle = p.color; ctx.globalAlpha = Math.max(0, p.life);
+                    ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI*2); ctx.fill();
+                });
+                ctx.globalAlpha = 1.0;
 
-            ctx.save();
-            ctx.translate(drone.x, drone.y);
-            ctx.rotate(drone.angle);
-            ctx.strokeStyle = "#94a3b8"; ctx.lineWidth = 3;
-            ctx.beginPath(); ctx.moveTo(-12, -12); ctx.lineTo(12, 12); ctx.moveTo(12, -12); ctx.lineTo(-12, 12); ctx.stroke();
-            ctx.fillStyle = "#2563eb"; ctx.beginPath(); ctx.arc(0, 0, 8, 0, Math.PI*2); ctx.fill();
-            ctx.fillStyle = running ? "#10b981" : "#ef4444"; ctx.beginPath(); ctx.arc(8, 0, 2, 0, Math.PI*2); ctx.fill();
-            ctx.restore();
+                ctx.save();
+                ctx.translate(drone.x, drone.y);
+                ctx.rotate(drone.angle);
+                
+                ctx.strokeStyle = "#94a3b8"; ctx.lineWidth = 3;
+                ctx.beginPath(); ctx.moveTo(-12, -12); ctx.lineTo(12, 12); ctx.moveTo(12, -12); ctx.lineTo(-12, 12); ctx.stroke();
+                ctx.fillStyle = "#2563eb"; ctx.beginPath(); ctx.arc(0, 0, 8, 0, Math.PI*2); ctx.fill();
+                ctx.fillStyle = running ? "#10b981" : "#ef4444"; ctx.beginPath(); ctx.arc(8, 0, 2, 0, Math.PI*2); ctx.fill();
+                
+                if (running) {
+                    ctx.strokeStyle = `rgba(59, 130, 246, ${(Math.sin(globalTime*5)+1)*0.15})`;
+                    ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(0, 0, 120, 0, Math.PI*2); ctx.stroke();
+                }
+                ctx.restore();
+            }
         }
 
         function exportToPowerBI() {
@@ -1589,6 +1682,14 @@
             document.getElementById('detail-origin').textContent = p.origen || '-';
             document.getElementById('detail-rot').textContent = p.rotacion || '-';
             
+            const catEl = document.getElementById('detail-cat');
+            if(catEl) {
+                catEl.textContent = p.categoria || '-';
+                if(p.categoria.includes('Peligroso')) catEl.className = "font-bold text-red-500";
+                else if(p.categoria.includes('Refrigerado')) catEl.className = "font-bold text-sky-400";
+                else catEl.className = "font-bold text-yellow-400";
+            }
+            
             const numCajas = Math.max(1, Math.ceil(p.qty / 15));
             document.getElementById('detail-boxes').textContent = `📦 Distribuido en ${numCajas} caja(s)`;
             
@@ -1692,6 +1793,11 @@
             document.getElementById('rep-time').textContent = (currHistory.flightTime || 0) + 's';
             document.getElementById('rep-loss').textContent = '$' + (currHistory.financialLoss || 0).toLocaleString();
             
+            const lowStockEl = document.getElementById('rep-lowstock');
+            if(lowStockEl) lowStockEl.textContent = currHistory.lowStock || 0;
+            const totalValEl = document.getElementById('rep-totalvalue');
+            if(totalValEl) totalValEl.textContent = '$' + (currHistory.totalValue || 0).toLocaleString();
+            
             let efficiency = currHistory.flightTime > 0 ? (currHistory.scanned / currHistory.flightTime).toFixed(1) : 0;
             document.getElementById('rep-efficiency').textContent = `Velocidad: ${efficiency} items/seg`;
 
@@ -1761,6 +1867,10 @@
                 html += `<p class="leading-relaxed">La zona crítica es <strong class="text-white">${worstLoc}</strong> con ${locations[worstLoc]} faltantes. Se sugiere auditoría manual inmediata.</p>`;
             }
 
+            if (curr.lowStock > 0) {
+                html += `<p class="leading-relaxed text-amber-400 mt-2">📉 <strong>Alerta de Reabastecimiento:</strong> Se detectaron ${curr.lowStock} SKU's por debajo del stock mínimo de seguridad. Se recomienda contactar a compras/proveedores.</p>`;
+            }
+
             html += `<hr class="border-gray-700 my-3">`;
             if (curr.wasManual) {
                 html += `<p class="text-xs text-gray-400">💡 <strong>Nota Operativa:</strong> El vuelo manual proporciona control pero reduce la eficiencia de escaneo. Se recomienda el modo autónomo para auditorías completas de almacén.</p>`;
@@ -1778,8 +1888,9 @@
             if (chartAccuracyObj) chartAccuracyObj.destroy();
             if (chartZonesObj) chartZonesObj.destroy();
             if (chartBatteryObj) chartBatteryObj.destroy();
+            if (chartCategoryObj) chartCategoryObj.destroy();
             
-            const pbiBlue = '#118DFF', pbiTeal = '#00B8AA', pbiRed = '#FD625E', pbiYellow = '#F2C80F', pbiPurple = '#8A2BE2';
+            const pbiBlue = '#118DFF', pbiTeal = '#00B8AA', pbiRed = '#FD625E', pbiYellow = '#F2C80F', pbiPurple = '#8A2BE2', pbiGreen = '#10B981';
             
             Chart.defaults.color = '#9ca3af';
             Chart.defaults.font.family = 'Inter, sans-serif';
@@ -1836,6 +1947,23 @@
                     type: 'line',
                     data: { labels: labels, datasets: [{ label: 'Batería (%)', data: recentHistory.map(h => h.batteryLeft), borderColor: pbiYellow, fill: true, backgroundColor: 'rgba(242, 200, 15, 0.1)' }] },
                     options: { responsive: true, maintainAspectRatio: false, scales: { y: { max: 100 } } }
+                });
+            }
+
+            const catCounts = {};
+            currentShift.raw.forEach(p => {
+                const cat = p.categoria || 'Sin Categoría';
+                catCounts[cat] = (catCounts[cat] || 0) + 1;
+            });
+            const c5 = document.getElementById('chart-category');
+            if(c5) {
+                chartCategoryObj = new Chart(c5.getContext('2d'), {
+                    type: 'polarArea',
+                    data: {
+                        labels: Object.keys(catCounts),
+                        datasets: [{ data: Object.values(catCounts), backgroundColor: [pbiBlue, pbiPurple, pbiTeal, pbiYellow] }]
+                    },
+                    options: { responsive: true, maintainAspectRatio: false, scales: { r: { ticks: { display: false }, grid: { color: '#374151' } } }, plugins: { legend: { position: 'bottom' } } }
                 });
             }
         }
