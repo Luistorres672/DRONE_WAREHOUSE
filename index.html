@@ -105,6 +105,9 @@
                 <button onclick="toggleAudio()" id="btn-audio" class="px-5 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-semibold transition shadow-lg shadow-slate-900/30 flex items-center gap-2">
                     🔇 Sonido: Off
                 </button>
+                <button onclick="simularLogistica()" class="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-semibold transition shadow-lg shadow-indigo-500/30 flex items-center gap-2" title="Ejecuta ventas, reubicación y anomalías en el almacén">
+                    📦 Simular Logística
+                </button>
                 <button onclick="exportToPowerBI()" class="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-semibold transition shadow-lg shadow-emerald-500/30 flex items-center gap-2">
                     📊 Exportar CSV 
                 </button>
@@ -164,6 +167,14 @@
                         <div class="bg-slate-800 p-2 rounded border border-slate-700">
                             <span class="text-slate-400 block text-[10px] uppercase">Inventario</span>
                             <span id="detail-qty" class="font-bold text-emerald-400">0 uds.</span>
+                        </div>
+                        <div class="bg-slate-800 p-2 rounded border border-slate-700">
+                            <span class="text-slate-400 block text-[10px] uppercase">Origen</span>
+                            <span id="detail-origin" class="font-bold text-blue-400">-</span>
+                        </div>
+                        <div class="bg-slate-800 p-2 rounded border border-slate-700">
+                            <span class="text-slate-400 block text-[10px] uppercase">Rotación</span>
+                            <span id="detail-rot" class="font-bold text-purple-400">-</span>
                         </div>
                     </div>
                     <div id="detail-boxes" class="text-xs text-slate-300 mb-3 text-center bg-slate-800/50 py-1 rounded">-- cajas --</div>
@@ -673,6 +684,11 @@
             products = [];
             let skuCounter = 1000;
             
+            const origenes = ['Local', 'Regional', 'Nacional', 'Importación'];
+            const rotaciones = ['Alta (A)', 'Media (B)', 'Baja (C)'];
+            // 70% cajas perfectas, 30% con anomalías de almacén
+            const posiblesErrores = [null, null, null, null, null, null, null, 'missing', 'misplaced', 'damaged'];
+            
             const rackConfig = [
                 { name: 'Drive-In (C)', startX: 100, cols: 1, spaceX: 0, rows: 6, spaceY: 55 },
                 { name: 'Rotación Media (C)', startX: 250, cols: 4, spaceX: 80, rows: 7, spaceY: 45 },
@@ -682,6 +698,7 @@
             rackConfig.forEach(zone => {
                 for(let c=0; c<zone.cols; c++) {
                     for(let r=0; r<zone.rows; r++) {
+                        let error = posiblesErrores[Math.floor(Math.random() * posiblesErrores.length)];
                         products.push({
                             id: `SKU-${skuCounter++}`, 
                             name: `Caja ${zone.name}`, 
@@ -689,8 +706,11 @@
                             loc: `${zone.name.split(' ')[0]}-P${c+1}-N${r+1}`,
                             x: zone.startX + c * zone.spaceX,
                             y: 150 + r * zone.spaceY,
-                            scanned: false, scanProgress: 0,
-                            isMissing: Math.random() < 0.05
+                            origen: origenes[Math.floor(Math.random() * origenes.length)],
+                            rotacion: rotaciones[Math.floor(Math.random() * rotaciones.length)],
+                            errorType: error,
+                            isMissing: error === 'missing', // Compatibilidad
+                            scanned: false, scanProgress: 0
                         });
                     }
                 }
@@ -741,6 +761,41 @@
             const el = document.getElementById("time-display");
             if(el) el.textContent = `Día ${timeState.day} - ${timeStr}`;
         }
+
+        window.simularLogistica = function() {
+            if(running) return alert("⚠️ Pausa el dron primero para que los montacargas puedan operar.");
+            
+            let ventas = 0;
+            let reabastecidos = 0;
+            let reubicados = 0;
+
+            products.forEach(p => {
+                // 1. Simular Ventas (Despachos)
+                if (Math.random() < 0.4) {
+                    let sold = Math.floor(Math.random() * 15) + 1;
+                    p.qty = Math.max(0, p.qty - sold);
+                    ventas += sold;
+                }
+                // 2. Reabastecimiento a proveedores
+                if (p.qty < 5) {
+                    p.qty += Math.floor(Math.random() * 80) + 20;
+                    reabastecidos++;
+                }
+                // 3. WMS Inteligente: Mover Rotación Alta a la zona de Picking
+                if (p.rotacion === 'Alta (A)' && !p.loc.includes('Picking')) {
+                    // Montacargas mueve físicamente la caja a la zona de Picking
+                    p.x = 650 + (Math.random() > 0.5 ? 80 : 0); 
+                    p.loc = `Picking-Reubicado-${Math.floor(Math.random()*100)}`;
+                    reubicados++;
+                    // 15% de probabilidad de que el operador lo acomode en un lugar incorrecto
+                    if (Math.random() < 0.15) p.errorType = 'misplaced';
+                }
+            });
+
+            alert(`📦 Operación Logística Finalizada:\n\n- Despachos (Ventas): ${ventas} uds.\n- Entradas (Proveedores): ${reabastecidos} palets.\n- Optimizaciones: ${reubicados} cajas de Rotación Alta movidas a Picking.`);
+            renderInventoryList();
+            draw2DWarehouse();
+        };
 
         function startMission() {
             if (running || products.length === 0) return;
@@ -1016,7 +1071,13 @@
                     if (dist < 150) aiTargetFound = true;
 
                     if (dist < 120) {
-                        p.scanProgress += dt * 1.5;
+                        // Si la etiqueta está dañada, el escáner batalla para leer (es 3 veces más lento)
+                        if (p.errorType === 'damaged') {
+                            p.scanProgress += dt * 0.4;
+                        } else {
+                            p.scanProgress += dt * 1.5;
+                        }
+
                         if (Math.random() < 0.2) scanLasers.push({ x1: drone.x, y1: drone.y, x2: p.x, y2: p.y, life: 0.1 });
 
                         if (p.scanProgress >= 1) {
@@ -1025,7 +1086,12 @@
                             uiNeedsUpdate = true;
                             scanLasers.push({ x1: drone.x, y1: drone.y, x2: p.x, y2: p.y, life: 0.4, confirm: true });
                             createParticles(p.x, p.y);
-                            updateRack3DColor(idx, 0x10b981);
+                            
+                            // Color 3D según resultado de la IA
+                            if (p.errorType === 'misplaced') updateRack3DColor(idx, 0xf97316); // Naranja (Mal ubicado)
+                            else if (p.errorType === 'damaged') updateRack3DColor(idx, 0xeab308); // Amarillo (Etiqueta Dañada)
+                            else updateRack3DColor(idx, 0x10b981); // Verde (OK)
+                            
                             playBeep('scan'); // Reproduce sonido al escanear
                         }
                     } else {
@@ -1467,14 +1533,24 @@
             document.getElementById('detail-name').textContent = p.name;
             document.getElementById('detail-loc').textContent = p.loc;
             document.getElementById('detail-qty').textContent = p.qty + " uds.";
+            document.getElementById('detail-origin').textContent = p.origen || '-';
+            document.getElementById('detail-rot').textContent = p.rotacion || '-';
             
             const numCajas = Math.max(1, Math.ceil(p.qty / 15));
             document.getElementById('detail-boxes').textContent = `📦 Distribuido en ${numCajas} caja(s)`;
             
             const statusEl = document.getElementById('detail-status');
             if (p.scanned) {
-                statusEl.innerHTML = "✅ INVENTARIADO";
-                statusEl.className = "mt-2 text-xs font-bold text-center p-2 rounded bg-emerald-900/50 text-emerald-400 border border-emerald-700";
+                if (p.errorType === 'misplaced') {
+                    statusEl.innerHTML = "⚠️ MAL UBICADO";
+                    statusEl.className = "mt-2 text-xs font-bold text-center p-2 rounded bg-orange-900/50 text-orange-400 border border-orange-700";
+                } else if (p.errorType === 'damaged') {
+                    statusEl.innerHTML = "⚠️ CÓDIGO DAÑADO";
+                    statusEl.className = "mt-2 text-xs font-bold text-center p-2 rounded bg-yellow-900/50 text-yellow-400 border border-yellow-700";
+                } else {
+                    statusEl.innerHTML = "✅ INVENTARIADO";
+                    statusEl.className = "mt-2 text-xs font-bold text-center p-2 rounded bg-emerald-900/50 text-emerald-400 border border-emerald-700";
+                }
             } else if (p.isMissing && !running && drone.state === 'idle' && waypointIdx > 0) {
                 statusEl.innerHTML = "❌ EXTRAVIADO / ALERTA";
                 statusEl.className = "mt-2 text-xs font-bold text-center p-2 rounded bg-red-900/50 text-red-400 border border-red-700 animate-pulse";
@@ -1498,9 +1574,19 @@
                 let textCol = 'text-slate-200';
                 
                 if (p.scanned) {
-                    statusClass = 'bg-emerald-900/40 border-emerald-500/30';
-                    statusText = '✔ OK';
-                    textCol = 'text-emerald-400';
+                    if (p.errorType === 'misplaced') {
+                        statusClass = 'bg-orange-900/40 border-orange-500/30';
+                        statusText = '⚠️ Ubic';
+                        textCol = 'text-orange-400';
+                    } else if (p.errorType === 'damaged') {
+                        statusClass = 'bg-yellow-900/40 border-yellow-500/30';
+                        statusText = '📛 Daño';
+                        textCol = 'text-yellow-400';
+                    } else {
+                        statusClass = 'bg-emerald-900/40 border-emerald-500/30';
+                        statusText = '✔ OK';
+                        textCol = 'text-emerald-400';
+                    }
                 } else if (!running && drone.state === 'idle' && waypointIdx > 0) {
                     statusClass = 'bg-red-900/40 border-red-500/30';
                     statusText = '❌ Falta';
@@ -1578,8 +1664,16 @@
                 html += `<p class="leading-relaxed text-emerald-400 mt-2">Riesgo financiero de discrepancias: $0.00 USD.</p>`;
             } else {
                 const missingPct = ((curr.missing / curr.total) * 100).toFixed(1);
-                html += `<p class="leading-relaxed mb-2"><strong class="text-[#fd625e]">Alerta Operativa:</strong> Se detectó una discrepancia del <strong class="text-white">${missingPct}%</strong> (${curr.missing} items).</p>`;
+                html += `<p class="leading-relaxed mb-2"><strong class="text-[#fd625e]">Alerta Operativa:</strong> Se detectó una discrepancia del <strong class="text-white">${missingPct}%</strong> (${curr.missing} items extraviados totalmente).</p>`;
                 
+                // Calcular anomalías logísticas (NUEVO)
+                const misplaced = curr.raw.filter(p => p.scanned && p.errorType === 'misplaced').length;
+                const damaged = curr.raw.filter(p => p.scanned && p.errorType === 'damaged').length;
+                
+                if (misplaced > 0 || damaged > 0) {
+                    html += `<p class="leading-relaxed text-orange-400 mb-2">🔍 <strong>Anomalías Logísticas:</strong> Se detectaron ${misplaced} cajas en ubicaciones equivocadas y ${damaged} con códigos de barras dañados/ilegibles.</p>`;
+                }
+
                 const lossStr = curr.financialLoss.toLocaleString();
                 html += `<p class="leading-relaxed text-rose-400 mb-2">⚠ Riesgo financiero estimado de <strong>$${lossStr} USD</strong> en capital inmovilizado o extraviado.</p>`;
 
